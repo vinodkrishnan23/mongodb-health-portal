@@ -31,7 +31,7 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
-.env*
+.env.local*
 
 # vercel
 .vercel
@@ -39,3 +39,79 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# MongoDB Health Check Portal Specific
+# Sample/test log files
+comprehensive_sample.log
+sample_mongodb.log
+sample_slow_query.log
+debug-auth.html
+
+# All MongoDB log files (uploaded by users)
+*.log
+*.log.gz
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Additional OS generated files
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Logs directory
+logs/
+
+# Optional eslint cache
+.eslintcache
+
+# Optional npm cache directory
+.npm
+
+# Temporary files
+tmp/
+temp/
+
+# Backup files
+*.backup
+*.bak
+
+# Database dumps and exports
+*.sql
+*.sqlite
+*.db
+
+# Certificate files
+*.key
+*.crt
+*.cert
+
+# Docker
+Dockerfile.local
+docker-compose.override.yml
+
+# AWS
+.aws/
+
+# Sentry
+.sentryclirc
+
+# Package lock files (optional - choose based on team preference)
+# package-lock.json
+
+# Local development and testing files
+test-uploads/
+uploads/
