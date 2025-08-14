@@ -7,6 +7,9 @@ export interface LogFile {
   uploadDate: Date;
   content?: string;
   isCompressed: boolean;
+  fileClassification?: 'primary' | 'secondary';
+  mongodbVersion?: string;
+  count?: number; // Added for aggregation results
   metadata?: {
     [key: string]: any;
   };

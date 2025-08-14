@@ -44,6 +44,7 @@ export default function AnalyticsDashboard({ sourceFile }: AnalyticsDashboardPro
   const [namespaceFilter, setNamespaceFilter] = useState<string>('');
   const [inMemorySortsFilter, setInMemorySortsFilter] = useState<boolean>(false);
   const [fromMultiPlannerFilter, setFromMultiPlannerFilter] = useState<boolean>(false);
+  const [excludeSystemNamespaces, setExcludeSystemNamespaces] = useState<boolean>(false);
   
   // Timeline analysis states
   const [selectedTimestamp, setSelectedTimestamp] = useState<string>('');
@@ -216,6 +217,17 @@ export default function AnalyticsDashboard({ sourceFile }: AnalyticsDashboardPro
       filtered = filtered.filter((query: any) => query.namespace === namespaceFilter);
     }
 
+    // Apply system namespace exclusion filter
+    if (excludeSystemNamespaces) {
+      filtered = filtered.filter((query: any) => {
+        if (!query.namespace) return true; // Keep queries without namespace
+        const namespace = query.namespace.toString();
+        return !namespace.startsWith('local.') && 
+               !namespace.startsWith('admin.') && 
+               !namespace.startsWith('config.');
+      });
+    }
+
     // Apply InMemorySorts filter
     if (inMemorySortsFilter) {
       filtered = filtered.filter((query: any) => query.hasSortStage === true);
@@ -268,7 +280,7 @@ export default function AnalyticsDashboard({ sourceFile }: AnalyticsDashboardPro
 
     setFilteredQueries(filtered);
     console.log(`Filtered queries: ${filtered.length} out of ${analytics.slowQueries.length}`);
-  }, [analytics?.slowQueries, startDate, endDate, startTime, endTime, timeFilter, operationFilter, namespaceFilter, inMemorySortsFilter, fromMultiPlannerFilter]);
+  }, [analytics?.slowQueries, startDate, endDate, startTime, endTime, timeFilter, operationFilter, namespaceFilter, inMemorySortsFilter, fromMultiPlannerFilter, excludeSystemNamespaces]);
 
   // Handle viewport width changes and scrolling boundaries
   useEffect(() => {
@@ -565,6 +577,17 @@ export default function AnalyticsDashboard({ sourceFile }: AnalyticsDashboardPro
       });
     }
 
+    // Apply system namespace exclusion filter to timeline as well
+    if (excludeSystemNamespaces) {
+      filteredQueries = filteredQueries.filter((query: any) => {
+        if (!query.namespace) return true; // Keep queries without namespace
+        const namespace = query.namespace.toString();
+        return !namespace.startsWith('local.') && 
+               !namespace.startsWith('admin.') && 
+               !namespace.startsWith('config.');
+      });
+    }
+
     // Sort by selected metric (highest first) and add timeline position info
     const sortedQueries = filteredQueries
       .sort((a, b) => getTimelineSortValue(b) - getTimelineSortValue(a))
@@ -851,6 +874,18 @@ export default function AnalyticsDashboard({ sourceFile }: AnalyticsDashboardPro
                     className="w-4 h-4 text-yellow-600 bg-white border-gray-200 rounded focus:ring-yellow-500 focus:ring-2"
                   />
                   <span>FromMultiPlanner</span>
+                </label>
+              </div>
+              
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={excludeSystemNamespaces}
+                    onChange={(e) => setExcludeSystemNamespaces(e.target.checked)}
+                    className="w-4 h-4 text-yellow-600 bg-white border-gray-200 rounded focus:ring-yellow-500 focus:ring-2"
+                  />
+                  <span>Exclude System Namespaces</span>
                 </label>
               </div>
             </div>

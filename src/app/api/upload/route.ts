@@ -6,6 +6,7 @@ import { pipeline } from 'stream/promises';
 import path from 'path';
 import { getLogFilesCollection } from '@/lib/mongodb';
 import { LogEntry, UploadResponse } from '@/types';
+import { json } from 'stream/consumers';
 
 // Function to clean up file names by extracting everything before the first dot
 function cleanFileName(fileName: string): string {
@@ -148,14 +149,19 @@ function processJsonLogLine(line: string, metadata: any): any {
     if (jsonLog.attr && jsonLog.attr.command && jsonLog.attr.command.$clusterTime && jsonLog.attr.command.$clusterTime.clusterTime && jsonLog.attr.command.$clusterTime.clusterTime.$timestamp && jsonLog.attr.command.$clusterTime.clusterTime.$timestamp.t) {
         try {
             queryStartTime = new Date(jsonLog.attr.command.$clusterTime.clusterTime.$timestamp.t * 1000); // Convert seconds to milliseconds
-            // Validate the date
-            if (isNaN(queryStartTime.getTime())) {
-            queryStartTime = null;
-            }
+            
         } catch (dateError) {
             console.warn(`Failed to parse timestamp from attr.command.$clusterTime: ${jsonLog.attr.command.$clusterTime}`, dateError);
             queryStartTime = null;
         }
+    }
+
+    else if (jsonLog.t && jsonLog.t.$date && jsonLog.attr && jsonLog.attr.durationMillis){
+      // Validate the date
+            queryStartTime = new Date (new Date(jsonLog.t.$date).getTime() - jsonLog.attr.durationMillis);
+    }
+    else {
+              queryStartTime = new Date(jsonLog.t.$date);
     }
     
     // Add metadata and extracted timestamp to the existing JSON structure

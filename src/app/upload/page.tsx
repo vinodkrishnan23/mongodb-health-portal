@@ -463,7 +463,7 @@ export default function UploadPage() {
                         const analyticsFile = {
                           fileName: logFile._id,
                           cleanedFilename: logFile._id,
-                          classification: 'primary' as const,
+                          classification: logFile.fileClassification || 'primary',
                           entriesCreated: logFile.count,
                           uploadDate: logFile.uploadDate
                         };
