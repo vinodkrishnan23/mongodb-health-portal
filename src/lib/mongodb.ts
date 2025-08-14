@@ -34,6 +34,11 @@ export async function getUserEmailCollection(): Promise<Collection> {
   return db.collection('user_email');
 }
 
+export async function getAskAiCollection(): Promise<Collection> {
+  const { db } = await connectToDatabase();
+  return db.collection('ask_ai');
+}
+
 export async function closeDatabaseConnection(): Promise<void> {
   if (client) {
     await client.close();

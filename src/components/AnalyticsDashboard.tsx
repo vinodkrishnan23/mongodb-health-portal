@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
 
 interface AnalyticsData {
   timestampRange: {
@@ -28,6 +29,12 @@ export default function AnalyticsDashboard({ sourceFile }: AnalyticsDashboardPro
   const [error, setError] = useState<string | null>(null);
   const [selectedQuery, setSelectedQuery] = useState<any | null>(null);
   const [showQueryModal, setShowQueryModal] = useState(false);
+  
+  // AI Response states
+  const [activeTab, setActiveTab] = useState<'query' | 'ai'>('query');
+  const [aiResponse, setAiResponse] = useState<string>('');
+  const [isLoadingAi, setIsLoadingAi] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
   
   // Timestamp filtering states
   const [startDate, setStartDate] = useState<string>('');
@@ -418,6 +425,60 @@ export default function AnalyticsDashboard({ sourceFile }: AnalyticsDashboardPro
     } catch (e) {
       return 'Invalid timestamp';
     }
+  };
+
+  const handleAskAI = async () => {
+    if (!selectedQuery) return;
+    
+    setIsLoadingAi(true);
+    setAiError(null);
+    setActiveTab('ai');
+    
+    try {
+      const response = await fetch('/api/ask-ai', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sourceFile,
+          query: selectedQuery,
+          queryHash: selectedQuery.queryHash,
+          numYields: selectedQuery.numYields
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to get AI response');
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      setAiResponse('');
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = new TextDecoder().decode(value);
+        setAiResponse(prev => prev + chunk);
+      }
+    } catch (error) {
+      console.error('Error getting AI response:', error);
+      setAiError(error instanceof Error ? error.message : 'Failed to get AI response');
+    } finally {
+      setIsLoadingAi(false);
+    }
+  };
+
+  const resetAiStates = () => {
+    setActiveTab('query');
+    setAiResponse('');
+    setIsLoadingAi(false);
+    setAiError(null);
   };
 
   const getSeverityColor = (severity: string) => {
@@ -1935,17 +1996,56 @@ export default function AnalyticsDashboard({ sourceFile }: AnalyticsDashboardPro
             <div className="p-6 border-b border-gray-300">
               <div className="flex justify-between items-center">
                 <h3 className="text-xl font-semibold text-yellow-600">🔍 Query Details</h3>
+                <div className="flex items-center space-x-4">
+                  <button
+                    onClick={handleAskAI}
+                    disabled={isLoadingAi}
+                    className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  >
+                    <span>🤖</span>
+                    <span>{isLoadingAi ? 'Analyzing...' : 'Ask AI'}</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowQueryModal(false);
+                      resetAiStates();
+                    }}
+                    className="text-gray-600 hover:text-gray-800 text-2xl"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+              
+              {/* Tab Navigation */}
+              <div className="flex space-x-4 mt-4">
                 <button
-                  onClick={() => setShowQueryModal(false)}
-                  className="text-gray-600 hover:text-gray-800 text-2xl"
+                  onClick={() => setActiveTab('query')}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    activeTab === 'query'
+                      ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
+                      : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                  }`}
                 >
-                  ×
+                  Query Details
+                </button>
+                <button
+                  onClick={() => setActiveTab('ai')}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    activeTab === 'ai'
+                      ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                      : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                  }`}
+                >
+                  AI Analysis
+                  {aiResponse && <span className="ml-1 w-2 h-2 bg-green-500 rounded-full inline-block"></span>}
                 </button>
               </div>
             </div>
             
             <div className="p-6 overflow-y-auto max-h-[calc(90vh-120px)]">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {activeTab === 'query' ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Basic Query Info */}
                 <div className="space-y-4">
                   {/* Overall Time */}
@@ -2118,6 +2218,81 @@ export default function AnalyticsDashboard({ sourceFile }: AnalyticsDashboardPro
                   </div>
                 </div>
               </div>
+              ) : (
+                /* AI Response Tab */
+                <div className="space-y-4">
+                  <div className="flex items-center space-x-2 mb-4">
+                    <span className="text-2xl">🤖</span>
+                    <h4 className="text-xl font-semibold text-purple-600">AI Analysis</h4>
+                  </div>
+                  
+                  {isLoadingAi && (
+                    <div className="flex items-center justify-center py-12">
+                      <div className="flex items-center space-x-3">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+                        <span className="text-gray-600">Analyzing query with AI...</span>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {aiError && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-red-600">⚠️</span>
+                        <span className="text-red-800 font-medium">Error</span>
+                      </div>
+                      <p className="text-red-700 mt-2">{aiError}</p>
+                      <button
+                        onClick={handleAskAI}
+                        className="mt-3 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                      >
+                        Try Again
+                      </button>
+                    </div>
+                  )}
+                  
+                  {aiResponse && !isLoadingAi && (
+                    <div className="bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-200 rounded-lg p-6">
+                      <div className="prose prose-sm max-w-none prose-headings:text-gray-900 prose-strong:text-gray-900 prose-code:text-purple-700 prose-code:bg-purple-100 prose-code:px-1 prose-code:rounded prose-pre:bg-gray-100 prose-pre:border prose-li:text-gray-800">
+                        <ReactMarkdown
+                          components={{
+                            // Custom styling for specific elements
+                            h1: ({ children }) => <h1 className="text-xl font-bold text-purple-900 mb-3 mt-4 first:mt-0">{children}</h1>,
+                            h2: ({ children }) => <h2 className="text-lg font-bold text-purple-800 mb-2 mt-3 first:mt-0">{children}</h2>,
+                            h3: ({ children }) => <h3 className="text-md font-semibold text-purple-700 mb-2 mt-3 first:mt-0">{children}</h3>,
+                            p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
+                            strong: ({ children }) => <strong className="font-semibold text-purple-900">{children}</strong>,
+                            ul: ({ children }) => <ul className="list-disc list-inside space-y-1 mb-3">{children}</ul>,
+                            ol: ({ children }) => <ol className="list-decimal list-inside space-y-1 mb-3">{children}</ol>,
+                            li: ({ children }) => <li className="text-gray-800">{children}</li>,
+                            code: ({ children }) => <code className="bg-purple-100 text-purple-800 px-1 py-0.5 rounded text-sm font-mono">{children}</code>,
+                            pre: ({ children }) => <pre className="bg-gray-100 border rounded-lg p-3 overflow-x-auto mb-3">{children}</pre>
+                          }}
+                        >
+                          {aiResponse}
+                        </ReactMarkdown>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {!aiResponse && !isLoadingAi && !aiError && (
+                    <div className="text-center py-12">
+                      <div className="text-6xl mb-4">🤖</div>
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">AI Analysis Ready</h3>
+                      <p className="text-gray-600 mb-6">
+                        Click the "Ask AI" button to get intelligent insights about this query's performance, 
+                        optimization suggestions, and potential issues.
+                      </p>
+                      <button
+                        onClick={handleAskAI}
+                        className="px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all font-medium"
+                      >
+                        🤖 Ask AI to Analyze This Query
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
