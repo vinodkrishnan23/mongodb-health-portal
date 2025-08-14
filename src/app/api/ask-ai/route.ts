@@ -110,7 +110,21 @@ export async function POST(request: NextRequest) {
     // Create a comprehensive prompt for the AI with strict formatting requirements
     const prompt = `As a MongoDB performance expert, analyze this slow query and provide your response in EXACTLY this format structure. You must follow this template precisely:
 
-# 📊 QUERY PERFORMANCE ANALYSIS
+**Query Details:**
+- Namespace: ${query.namespace || 'N/A'}
+- Operation: ${query.operation || 'N/A'}
+- Duration: ${query.duration || query.durationMillis || 'N/A'}ms
+- Documents Examined: ${query.docsExamined || 'N/A'}
+- Documents Returned: ${query.docsReturned || 'N/A'}
+- Keys Examined: ${query.keysExamined || 'N/A'}
+- Plan Summary: ${query.planSummary || 'N/A'}
+- Query Hash: ${query.queryHash || 'N/A'}
+- Number of Yields: ${query.numYields || 'N/A'}
+- From Plan Cache: ${query.fromPlanCache ? 'Yes' : 'No'}
+- From Multi Planner: ${query.fromMultiPlanner ? 'Yes' : 'No'}
+- CPU Time: ${query.cpuNanos ? (query.cpuNanos / 1000000000).toFixed(3) + 's' : 'N/A'}
+- Data Read: ${query.dataReadMB ? query.dataReadMB.toFixed(2) + ' MB' : 'N/A'}
+- Time Reading: ${query.timeReadingMicros ? (query.timeReadingMicros / 1000000).toFixed(3) + 's' : 'N/A'}
 
 ## 🔍 Performance Assessment
 **Status:** [Choose: EXCELLENT/GOOD/POOR/CRITICAL]  
@@ -142,16 +156,13 @@ export async function POST(request: NextRequest) {
 
 ### 🔥 Immediate Actions (Priority: HIGH/MEDIUM/LOW)
 1. **[Action Title]**
-   - **Command:** \`\`\`javascript
+   - **Command:** 
    [Exact MongoDB command syntax]
-   \`\`\`
    - **Expected Impact:** [Specific improvement estimate]
 
 ### 🏗️ Index Optimizations
 1. **[Index Type]**
-   - **Command:** \`\`\`javascript
-   [Exact index creation command following ESR rules]
-   \`\`\`
+   - **Command:** [Exact index creation command following ESR rules]
    - **Rationale:** [Why this index helps]
 
 ### ⚡ Query Restructuring
@@ -184,10 +195,10 @@ ${query.filter ? '\n**Filter:** ```json\n' + JSON.stringify(query.filter, null, 
 ${query.sort ? '\n**Sort:** ```json\n' + JSON.stringify(query.sort, null, 2) + '\n```' : ''}
 ${query.pipeline ? '\n**Pipeline:** ```json\n' + JSON.stringify(query.pipeline, null, 2) + '\n```' : ''}
 
-CRITICAL: You MUST follow this exact format structure with the same headings, emojis, and sections. Fill in every section completely with specific, actionable content. Use ESR (Equality, Sort, Range) rules for index suggestions.`;
+CRITICAL: You MUST follow this exact format structure with the same headings, emojis, and sections. Fill in every section completely with specific, actionable content. Use ESR (Equality, Sort, Range) rules and its exceptions for index suggestions.`;
 
     // Generate AI response using Gemini
-    console.log('🤖 Calling Gemini API with model: gemini-1.5-flash');
+    console.log('🤖 Calling Gemini API with model: gemini-2.5-pro');
     const result = await model.generateContent(prompt);
     const aiResponse = result.response.text();
     
