@@ -2,3 +2,4 @@ envSecrets:
     MONGODB_URI: health-check-portal
     ecr_access_key: health-check-portal
     ecr_secret_key: health-check-portal
+    GOOGLE_AI_API_KEY: health-check-portal

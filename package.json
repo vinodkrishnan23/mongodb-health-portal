@@ -9,12 +9,14 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@types/multer": "^2.0.0",
     "mongodb": "^6.18.0",
     "multer": "^2.0.2",
     "next": "15.4.6",
     "react": "19.1.0",
     "react-dom": "19.1.0",
+    "react-markdown": "^10.1.0",
     "recharts": "^3.1.2"
   },
   "devDependencies": {
