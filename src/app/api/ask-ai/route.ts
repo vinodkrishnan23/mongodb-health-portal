@@ -9,14 +9,29 @@ if (!process.env.GOOGLE_AI_API_KEY) {
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || '');
 
-// Try different model names in order of preference
-const getModel = () => {
-  const modelNames = ['gemini-1.5-flash', 'gemini-2.5-pro', 'gemini-1.0-pro'];
-  // For now, start with the most recent model
-  return genAI.getGenerativeModel({ model: modelNames[1] });
-};
+// Use a consistent, available model.
+const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-const model = getModel();
+// Helper function for retrying API calls with exponential backoff
+async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 3, initialDelay = 1000): Promise<T> {
+  let delay = initialDelay;
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      // Only retry on 503 Service Unavailable errors
+      if (error.message.includes('503') && i < retries - 1) {
+        console.warn(`⚠️ API call failed with 503, retrying in ${delay}ms... (Attempt ${i + 1}/${retries})`);
+        const jitter = Math.random() * delay * 0.2;
+        await new Promise(res => setTimeout(res, delay + jitter));
+        delay *= 2; // Exponentially increase delay
+      } else {
+        throw error;
+      }
+    }
+  }
+  throw new Error("Retry logic failed unexpectedly.");
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -52,12 +67,10 @@ export async function POST(request: NextRequest) {
 
     const collection = await getAskAiCollection();
     
-    // Create a unique identifier for this query
     const queryIdentifier = {
       sourceFile,
       queryHash: queryHash || null,
       numYields: numYields || null,
-      // Include key query characteristics for uniqueness
       namespace: query.namespace || null,
       operation: query.operation || null,
       duration: query.duration || query.durationMillis || null
@@ -65,29 +78,25 @@ export async function POST(request: NextRequest) {
 
     console.log('🔍 Checking for existing AI response for query:', queryIdentifier);
 
-    // Check if response already exists
     const existingResponse = await collection.findOne(queryIdentifier);
 
     if (existingResponse) {
       console.log('✅ Found existing AI response, streaming cached result');
       
-      // Stream the cached response
       const encoder = new TextEncoder();
       const stream = new ReadableStream({
         start(controller) {
           const response = existingResponse.aiResponse || 'No response found';
-          // Stream the response in chunks to simulate real-time streaming
           const words = response.split(' ');
           let index = 0;
           
           const streamChunk = () => {
             if (index < words.length) {
-              // Stream multiple words at once for better markdown rendering
               const wordsPerChunk = 5;
               const chunk = words.slice(index, index + wordsPerChunk).join(' ') + ' ';
               controller.enqueue(encoder.encode(chunk));
               index += wordsPerChunk;
-              setTimeout(streamChunk, 100); // Slightly longer delay for smoother appearance
+              setTimeout(streamChunk, 100);
             } else {
               controller.close();
             }
@@ -107,132 +116,103 @@ export async function POST(request: NextRequest) {
 
     console.log('🤖 No existing response found, generating new AI analysis');
 
-    // Create a comprehensive prompt for the AI with strict formatting requirements
-    const prompt = `As a MongoDB performance expert, analyze this slow query and provide your response in EXACTLY this format structure. You must follow this template precisely:
+    // **MODIFIED SECTION START**
+    // This prompt uses cleaner, more standard Markdown for better rendering.
+    const prompt = `<INSTRUCTIONS>
+You are a world-class MongoDB Performance Engineer. Your task is to analyze a slow query log, identify the root cause, and provide actionable optimization recommendations.
 
-**Query Details:**
-- Namespace: ${query.namespace || 'N/A'}
-- Operation: ${query.operation || 'N/A'}
-- Duration: ${query.duration || query.durationMillis || 'N/A'}ms
-- Documents Examined: ${query.docsExamined || 'N/A'}
-- Documents Returned: ${query.docsReturned || 'N/A'}
-- Keys Examined: ${query.keysExamined || 'N/A'}
-- Plan Summary: ${query.planSummary || 'N/A'}
-- Query Hash: ${query.queryHash || 'N/A'}
-- Number of Yields: ${query.numYields || 'N/A'}
-- From Plan Cache: ${query.fromPlanCache ? 'Yes' : 'No'}
-- From Multi Planner: ${query.fromMultiPlanner ? 'Yes' : 'No'}
-- CPU Time: ${query.cpuNanos ? (query.cpuNanos / 1000000000).toFixed(3) + 's' : 'N/A'}
-- Data Read: ${query.dataReadMB ? query.dataReadMB.toFixed(2) + ' MB' : 'N/A'}
-- Time Reading: ${query.timeReadingMicros ? (query.timeReadingMicros / 1000000).toFixed(3) + 's' : 'N/A'}
+Your response MUST be in Markdown and STRICTLY follow the structure in the <OUTPUT_TEMPLATE>. Do not add any commentary before or after the response.
 
-## 🔍 Performance Assessment
-**Status:** [Choose: EXCELLENT/GOOD/POOR/CRITICAL]  
-**Summary:** [2-3 sentences about overall performance]
+Analyze the provided <QUERY_DATA> to fill out the template.
+</INSTRUCTIONS>
 
-## 📈 Key Metrics
-- **Duration:** ${query.duration || query.durationMillis || 'N/A'}ms
-- **Documents Examined:** ${query.docsExamined || 'N/A'}
-- **Documents Returned:** ${query.docsReturned || 'N/A'}
-- **Efficiency Ratio:** [Calculate: docsExamined ÷ docsReturned]
-- **Plan Summary:** ${query.planSummary || 'N/A'}
-- **From Plan Cache:** ${query.fromPlanCache ? 'Yes' : 'No'}
+<QUERY_DATA>
+${JSON.stringify(query, null, 2)}
+</QUERY_DATA>
 
-## 🚨 Root Cause Analysis
-
-### 1. Index Usage
-[Analyze index efficiency and usage patterns]
-
-### 2. Document Scanning
-[Analyze scanning vs. returning ratio and efficiency]
-
-### 3. Sort Operations  
-[Analyze sort performance and memory usage]
-
-### 4. Plan Cache Utilization
-[Analyze plan cache usage and multi-planner impact]
-
-## 💡 Optimization Recommendations
-
-### 🔥 Immediate Actions (Priority: HIGH/MEDIUM/LOW)
-1. **[Action Title]**
-   - **Command:** 
-   [Exact MongoDB command syntax]
-   - **Expected Impact:** [Specific improvement estimate]
-
-### 🏗️ Index Optimizations
-1. **[Index Type]**
-   - **Command:** [Exact index creation command following ESR rules]
-   - **Rationale:** [Why this index helps]
-
-### ⚡ Query Restructuring
-1. **[Restructuring Type]**
-   - **Suggested Change:** [Specific modification]
-   - **Alternative Approach:** [If applicable]
-
-## ⚠️ Priority Assessment
-**Level:** [HIGH/MEDIUM/LOW]  
-**Reasoning:** [Explain why this priority level]
-
-## 📊 Expected Impact
-- **Performance Improvement:** [% or ms improvement estimate]
-- **Resource Savings:** [CPU/Memory savings estimate]  
-- **Implementation Time:** [Estimated timeframe]
+<OUTPUT_TEMPLATE>
+### Performance Assessment
+**Status:** [Choose: EXCELLENT, GOOD, POOR, CRITICAL]
+**Summary:** [2-3 sentence summary of the query's performance.]
 
 ---
-**Query Context:**
-- Namespace: ${query.namespace || 'N/A'}
-- Operation: ${query.operation || 'N/A'}
-- Query Hash: ${query.queryHash || 'N/A'}
-- Yields: ${query.numYields || 'N/A'}
-- CPU Time: ${query.cpuNanos ? (query.cpuNanos / 1000000000).toFixed(3) + 's' : 'N/A'}
-- Data Read: ${query.dataReadMB ? query.dataReadMB.toFixed(2) + ' MB' : 'N/A'}
-- I/O Time: ${query.timeReadingMicros ? (query.timeReadingMicros / 1000000).toFixed(3) + 's' : 'N/A'}
 
-**Query Details:**
-${query.command ? '```json\n' + JSON.stringify(query.command, null, 2) + '\n```' : ''}
-${query.filter ? '\n**Filter:** ```json\n' + JSON.stringify(query.filter, null, 2) + '\n```' : ''}
-${query.sort ? '\n**Sort:** ```json\n' + JSON.stringify(query.sort, null, 2) + '\n```' : ''}
-${query.pipeline ? '\n**Pipeline:** ```json\n' + JSON.stringify(query.pipeline, null, 2) + '\n```' : ''}
+### Key Metrics Analysis
+- **Duration:** ${query.duration || query.durationMillis || 'N/A'} ms
+- **Documents Examined vs. Returned:** ${query.docsExamined || 'N/A'} / ${query.docsReturned || 'N/A'}
+- **Efficiency Ratio:** [Calculate docsExamined / docsReturned. If docsReturned is 0, state "N/A".]
+- **Index Usage:** [Analyze \`planSummary\`. State if an index was used effectively (IXSCAN vs. COLLSCAN).]
 
-CRITICAL: You MUST follow this exact format structure with the same headings, emojis, and sections. Fill in every section completely with specific, actionable content. Use ESR (Equality, Sort, Range) rules and its exceptions for index suggestions.`;
+---
 
-    // Generate AI response using Gemini
-    console.log('🤖 Calling Gemini API with model: gemini-2.5-pro');
-    const result = await model.generateContent(prompt);
-    const aiResponse = result.response.text();
+### Root Cause Analysis
+[Detailed analysis of WHY the query is slow, connecting the metrics to the problem. Explain how a high efficiency ratio or a SORT stage indicates a problem.]
+
+---
+
+### Optimization Recommendations
+**1. Create Optimized Index (Priority: HIGH)**
+- **Description:** An index is needed to cover the query's filter and sort criteria.
+- **Command:**
+\`\`\`javascript
+db.getCollection('${query.namespace?.split('.')[1] || 'collection'}').createIndex({ /* field: 1, anotherField: -1 */ });
+\`\`\`
+- **Rationale:** [Explain why this index helps, referencing the ESR rule.]
+- **Expected Impact:** Significant reduction in query duration and documents examined.
+
+**2. Query Restructuring (If Applicable)**
+- **Suggestion:** [If the query can be improved, describe the change. Otherwise, state "No restructuring needed." ]
+
+---
+
+### Expected Impact
+- **Performance Improvement:** [Estimate improvement, e.g., ">90% reduction in latency".]
+- **Resource Savings:** [Estimate savings, e.g., "Lower CPU and I/O usage." ]
+</OUTPUT_TEMPLATE>
+`;
+    // **MODIFIED SECTION END**
+
+    console.log(`🤖 Calling Gemini API with model: ${model.model}`);
+    
+    const result = await retryWithBackoff(() => model.generateContent(prompt));
+    
+    const response = result.response;
+    const aiResponse = response.text();
+    const usageMetadata = response.usageMetadata;
+    const totalTokens = usageMetadata ? usageMetadata.totalTokens : 0;
+
+    console.log(`🪙 Token usage: ${totalTokens} tokens (Prompt: ${usageMetadata?.promptTokenCount}, Response: ${usageMetadata?.candidatesTokenCount})`);
     
     if (!aiResponse || aiResponse.trim().length === 0) {
       throw new Error('Empty response from Gemini API');
     }
 
-    // Validate that the response follows the expected format
     const requiredSections = [
-      '# 📊 QUERY PERFORMANCE ANALYSIS',
-      '## 🔍 Performance Assessment',
-      '## 📈 Key Metrics',
-      '## 🚨 Root Cause Analysis',
-      '## 💡 Optimization Recommendations',
-      '## ⚠️ Priority Assessment',
-      '## 📊 Expected Impact'
+      '### Performance Assessment',
+      '### Key Metrics Analysis',
+      '### Root Cause Analysis',
+      '### Optimization Recommendations',
+      '### Expected Impact'
     ];
 
     const missingSection = requiredSections.find(section => !aiResponse.includes(section));
     if (missingSection) {
       console.warn(`⚠️ AI response missing expected section: ${missingSection}`);
-      // Don't throw error, just log warning to allow partial responses
     }
 
     console.log('✅ AI response format validation complete');
-
     console.log('🎯 Generated AI response, saving to database');
 
-    // Save the response to the database
     const responseDocument = {
       ...queryIdentifier,
       aiResponse,
       createdAt: new Date(),
-      prompt: prompt.substring(0, 1000) + '...', // Store truncated prompt for debugging
+      tokenUsage: {
+          promptTokens: usageMetadata?.promptTokenCount || 0,
+          responseTokens: usageMetadata?.candidatesTokenCount || 0,
+          totalTokens: totalTokens,
+      },
+      prompt: prompt.substring(0, 1000) + '...',
       queryDetails: {
         originalQuery: query,
         metadata: {
@@ -247,7 +227,6 @@ CRITICAL: You MUST follow this exact format structure with the same headings, em
     await collection.insertOne(responseDocument);
     console.log('💾 AI response saved successfully');
 
-    // Stream the new response
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       start(controller) {
@@ -256,12 +235,11 @@ CRITICAL: You MUST follow this exact format structure with the same headings, em
         
         const streamChunk = () => {
           if (index < words.length) {
-            // Stream multiple words at once for better markdown rendering
             const wordsPerChunk = 5;
             const chunk = words.slice(index, index + wordsPerChunk).join(' ') + ' ';
             controller.enqueue(encoder.encode(chunk));
             index += wordsPerChunk;
-            setTimeout(streamChunk, 100); // Slightly longer delay for smoother appearance
+            setTimeout(streamChunk, 100);
           } else {
             controller.close();
           }
@@ -281,21 +259,25 @@ CRITICAL: You MUST follow this exact format structure with the same headings, em
   } catch (error) {
     console.error('Ask AI error:', error);
     
-    // Provide more specific error messages
     let errorMessage = 'Error generating AI response: ';
     
     if (error instanceof Error) {
-      if (error.message.includes('API key')) {
-        errorMessage += 'Invalid or missing Google AI API key. Please check your GOOGLE_AI_API_KEY environment variable.';
-      } else if (error.message.includes('models/') || error.message.includes('not found')) {
-        errorMessage += 'Model not available. The Gemini model may have been updated. Please check the latest model names.';
-      } else if (error.message.includes('quota') || error.message.includes('limit')) {
-        errorMessage += 'API quota exceeded. Please check your Google AI API usage limits.';
-      } else {
-        errorMessage += error.message;
-      }
+        const message = error.message.toLowerCase();
+        if (message.includes('api key')) {
+            errorMessage += 'Invalid or missing Google AI API key.';
+        } else if (message.includes('model') && message.includes('not found')) {
+            errorMessage += 'Model not available. Please check the model name.';
+        } else if (message.includes('quota') || message.includes('limit')) {
+            errorMessage += 'API quota exceeded.';
+        } else if (message.includes('billing')) {
+            errorMessage += 'Billing issue. Please check your Google Cloud project billing status.';
+        } else if (message.includes('503')) {
+            errorMessage += 'The model is temporarily overloaded. Please try again later.';
+        } else {
+            errorMessage += error.message;
+        }
     } else {
-      errorMessage += 'Unknown error occurred';
+        errorMessage += 'An unknown error occurred.';
     }
     
     const encoder = new TextEncoder();
