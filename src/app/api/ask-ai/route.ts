@@ -11,9 +11,9 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || '');
 
 // Try different model names in order of preference
 const getModel = () => {
-  const modelNames = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.0-pro'];
+  const modelNames = ['gemini-1.5-flash', 'gemini-2.5-pro', 'gemini-1.0-pro'];
   // For now, start with the most recent model
-  return genAI.getGenerativeModel({ model: modelNames[0] });
+  return genAI.getGenerativeModel({ model: modelNames[1] });
 };
 
 const model = getModel();
@@ -161,7 +161,7 @@ Please provide a comprehensive analysis including:
 Please be specific, practical, and focus on actionable insights that a MongoDB administrator can implement.`;
 
     // Generate AI response using Gemini
-    console.log('🤖 Calling Gemini API with model: gemini-1.5-flash');
+    console.log('🤖 Calling Gemini API with model: gemini-2.5-pro');
     const result = await model.generateContent(prompt);
     const aiResponse = result.response.text();
     
