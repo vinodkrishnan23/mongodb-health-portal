@@ -22,6 +22,29 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     const loadFiles = async () => {
+      // Get user info from URL params or localStorage
+      let userData = null;
+      const userEmailParam = searchParams.get('userEmail');
+      
+      if (userEmailParam) {
+        // User email from URL parameter (from "View Analytics" button)
+        userData = { email: decodeURIComponent(userEmailParam), name: 'User' };
+        setUser(userData);
+        console.log('Analytics page - Got user from URL params:', userData);
+      } else {
+        // Try localStorage
+        const savedUser = localStorage.getItem('user');
+        if (savedUser) {
+          try {
+            userData = JSON.parse(savedUser);
+            setUser(userData);
+            console.log('Analytics page - Got user from localStorage:', userData);
+          } catch (error) {
+            console.error('Error parsing user data from localStorage:', error);
+          }
+        }
+      }
+      
       // Get files from URL params first
       const filesParam = searchParams.get('files');
       if (filesParam) {
@@ -39,28 +62,23 @@ export default function AnalyticsPage() {
       }
 
       // Try to get files from MongoDB using user email
-      const savedUser = localStorage.getItem('user');
-      if (savedUser) {
+      if (userData?.email) {
         try {
-          const userData = JSON.parse(savedUser);
-          setUser(userData); // Set user state for display
-          if (userData.email) {
-            const response = await fetch(`/api/upload-session?userEmail=${encodeURIComponent(userData.email)}`);
-            const data = await response.json();
-            
-            console.log('Analytics page - Upload session response:', data);
-            
-            if (data.success && data.data.latestSession?.uploadedFiles) {
-              console.log('Analytics page - Found uploaded files:', data.data.latestSession.uploadedFiles.length, 'files');
-              setFiles(data.data.latestSession.uploadedFiles);
-              if (data.data.latestSession.uploadedFiles.length > 0) {
-                setActiveFile(data.data.latestSession.uploadedFiles[0]);
-              }
-              setLoading(false);
-              return;
-            } else {
-              console.log('Analytics page - No uploaded files found in session');
+          const response = await fetch(`/api/upload-session?userEmail=${encodeURIComponent(userData.email)}`);
+          const data = await response.json();
+          
+          console.log('Analytics page - Upload session response:', data);
+          
+          if (data.success && data.data.latestSession?.uploadedFiles) {
+            console.log('Analytics page - Found uploaded files:', data.data.latestSession.uploadedFiles.length, 'files');
+            setFiles(data.data.latestSession.uploadedFiles);
+            if (data.data.latestSession.uploadedFiles.length > 0) {
+              setActiveFile(data.data.latestSession.uploadedFiles[0]);
             }
+            setLoading(false);
+            return;
+          } else {
+            console.log('Analytics page - No uploaded files found in session');
           }
         } catch (error) {
           console.error('Failed to load files from MongoDB:', error);
@@ -224,7 +242,25 @@ export default function AnalyticsPage() {
         {activeFile ? (
           <div>
             {/* Analytics Dashboard */}
-            <AnalyticsDashboard sourceFile={activeFile.cleanedFilename} />
+            {user?.email ? (
+              <AnalyticsDashboard sourceFile={activeFile.cleanedFilename} userEmail={user.email} />
+            ) : (
+              <div className="text-center py-12">
+                <div className="bg-red-50 border border-red-300 rounded-lg p-6 max-w-md mx-auto">
+                  <h3 className="text-lg font-semibold text-red-800 mb-2">Authentication Required</h3>
+                  <p className="text-red-700 mb-4">User authentication is required to view analytics.</p>
+                  <p className="text-sm text-red-600">
+                    Please go back to the upload page and ensure you are logged in.
+                  </p>
+                  <button
+                    onClick={() => window.location.href = '/upload'}
+                    className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                  >
+                    Go to Upload Page
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           /* Welcome Screen */

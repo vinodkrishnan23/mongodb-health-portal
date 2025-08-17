@@ -5,11 +5,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const { searchParams } = new URL(request.url);
     const sourceFile = searchParams.get('sourceFile');
+    const userEmail = request.headers.get('x-user-email'); // Example: get user from header
     
     const collection = await getLogFilesCollection();
     
     // Build match criteria
-    const matchCriteria = sourceFile ? { sourceFile } : {};
+    const matchCriteria = sourceFile ? { sourceFile,userEmail } : {};
     
     // Aggregation pipeline for statistics
     const pipeline = [

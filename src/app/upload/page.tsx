@@ -12,6 +12,7 @@ interface LogFile {
   uploadDate: string;
   isCompressed: boolean;
   originalName: string;
+  fileClassification?: 'primary' | 'secondary';
 }
 
 interface LogsResponse {
@@ -69,21 +70,50 @@ export default function UploadPage() {
     const savedUser = localStorage.getItem('user');
     if (savedUser) {
       try {
-        setUser(JSON.parse(savedUser));
+        const parsedUser = JSON.parse(savedUser);
+        setUser(parsedUser);
+        fetchUploadedFiles(parsedUser);
+        console.log("savedUser:", parsedUser);
       } catch (error) {
         console.error('Error parsing user data:', error);
       }
     }
   }, []);
 
-  const fetchUploadedFiles = async () => {
+  const fetchUploadedFiles = async (userParam?: any) => {
     setRefreshing(true);
+    // Use provided user parameter or fall back to state user
+    const currentUser = userParam || user;
+    
+    if (!currentUser?.email) {
+      console.error('No user email available');
+      setRefreshing(false);
+      return;
+    }
+    
     try {
-      const response = await fetch('/api/logs');
+      console.log('Making API call with user email:', currentUser.email);
+      const response = await fetch('/api/logs',{
+        headers: {
+          'x-user-email': currentUser.email,
+        },
+      });
       const data: LogsResponse = await response.json();
+      console.log('API response:', data);
       
       if (data.success) {
         setUploadedFiles(data.data);
+        if (data.data.length === 0) {
+          console.log('No files found for this user. This could mean:');
+          console.log('1. No files have been uploaded by this user yet');
+          console.log('2. User email mismatch between upload and retrieval');
+          console.log('3. Database connection issue');
+        }
+      } else {
+        console.error('API error:', (data as any).message);
+        if ((data as any).error === 'MISSING_USER_EMAIL') {
+          console.error('User authentication issue - check localStorage user data');
+        }
       }
     } catch (error) {
       console.error('Error fetching uploaded files:', error);
@@ -101,7 +131,11 @@ export default function UploadPage() {
         // Try to get file classification from the first document
         let classification: 'primary' | 'secondary' | undefined;
         try {
-          const entryResponse = await fetch(`/api/logs/${encodeURIComponent(sourceFile)}?limit=1`);
+          const entryResponse = await fetch(`/api/logs/${encodeURIComponent(sourceFile)}?limit=1`, {
+            headers: {
+              'x-user-email': user?.email,
+            },
+          });
           const entryData = await entryResponse.json();
           if (entryData.success && entryData.data.length > 0) {
             classification = entryData.data[0].fileClassification;
@@ -120,9 +154,9 @@ export default function UploadPage() {
     }
   };
 
-  useEffect(() => {
-    fetchUploadedFiles();
-  }, []);
+  //useEffect(() => {
+    //fetchUploadedFiles();
+  //}, []);
 
   const handleUpload = async (files: FileList, cleanedNames?: string[]) => {
     setLoading(true);
@@ -333,7 +367,8 @@ export default function UploadPage() {
                 <button
                   onClick={() => {
                     const filesParam = encodeURIComponent(JSON.stringify(analyticsFiles));
-                    window.location.href = `/analytics?files=${filesParam}`;
+                    const userEmailParam = encodeURIComponent(user?.email || '');
+                    window.location.href = `/analytics?files=${filesParam}&userEmail=${userEmailParam}`;
                   }}
                   className="inline-flex items-center px-6 py-3 bg-blue-600 text-gray-900 rounded-lg hover:bg-blue-700 font-semibold transition-colors shadow-lg"
                 >
@@ -348,11 +383,11 @@ export default function UploadPage() {
               </div>
               
               {analyticsFiles.length === 1 ? (
-                <AnalyticsDashboard sourceFile={analyticsFiles[0].fileName} />
+                <AnalyticsDashboard sourceFile={analyticsFiles[0].fileName} userEmail={user?.email} />
               ) : (
                 (() => {
                   const activeFile = analyticsFiles.find(f => f.active) || analyticsFiles[0];
-                  return <AnalyticsDashboard sourceFile={activeFile.fileName} />;
+                  return <AnalyticsDashboard sourceFile={activeFile.fileName} userEmail={user?.email} />;
                 })()
               )}
             </div>
@@ -429,7 +464,7 @@ export default function UploadPage() {
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-semibold text-green-600">Uploaded Files</h3>
               <button
-                onClick={fetchUploadedFiles}
+                onClick={() => fetchUploadedFiles()}
                 disabled={refreshing}
                 className="px-3 py-1 text-sm bg-green-600 text-black rounded hover:bg-green-500 disabled:opacity-50"
               >
@@ -468,14 +503,15 @@ export default function UploadPage() {
                           uploadDate: logFile.uploadDate
                         };
                         const singleFileParam = encodeURIComponent(JSON.stringify([analyticsFile]));
-                        window.open(`/analytics?files=${singleFileParam}`, '_blank');
+                        const userEmailParam = encodeURIComponent(user?.email || '');
+                        window.open(`/analytics?files=${singleFileParam}&userEmail=${userEmailParam}`, '_blank');
                       }}
                       className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-500"
                     >
                       View Analytics
                     </button>
                     <button
-                      onClick={() => window.open(`/api/logs/${logFile._id}`, '_blank')}
+                      onClick={() => window.open(`/api/logs/${logFile._id}?userEmail=${encodeURIComponent(user?.email || '')}`, '_blank')}
                       className="px-3 py-1 text-xs bg-green-600 text-black rounded hover:bg-green-500"
                     >
                       View Entries

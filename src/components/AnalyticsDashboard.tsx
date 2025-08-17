@@ -21,9 +21,10 @@ interface AnalyticsData {
 
 interface AnalyticsDashboardProps {
   sourceFile: string;
+  userEmail?: string;
 }
 
-export default function AnalyticsDashboard({ sourceFile }: AnalyticsDashboardProps) {
+export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsDashboardProps) {
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +82,11 @@ export default function AnalyticsDashboard({ sourceFile }: AnalyticsDashboardPro
   const fetchAnalytics = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/analytics?sourceFile=${encodeURIComponent(sourceFile)}`);
+      const response = await fetch(`/api/analytics?sourceFile=${encodeURIComponent(sourceFile)}`, {
+        headers: {
+          'x-user-email': userEmail || '',
+        },
+      });
       const data = await response.json();
       
       if (data.success) {
@@ -439,6 +444,7 @@ export default function AnalyticsDashboard({ sourceFile }: AnalyticsDashboardPro
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-user-email': userEmail || ''
         },
         body: JSON.stringify({
           sourceFile,

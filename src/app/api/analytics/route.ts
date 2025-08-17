@@ -6,12 +6,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const { searchParams } = new URL(request.url);
     const sourceFile = searchParams.get('sourceFile');
+    const userEmail = request.headers.get('x-user-email') || searchParams.get('userEmail');
     
     if (!sourceFile) {
       return NextResponse.json({
         success: false,
         message: 'sourceFile parameter is required'
       }, { status: 400 });
+    }
+
+    if (!userEmail) {
+      return NextResponse.json({
+        success: false,
+        message: 'User authentication required'
+      }, { status: 401 });
     }
 
     const collection = await getLogFilesCollection();
@@ -34,7 +42,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       (async () => {
         const queryStart = Date.now();
         const result = await collection.aggregate([
-          { $match: { sourceFile } },
+          { $match: { sourceFile, userEmail } },
           {
             $group: {
               _id: null,
@@ -71,6 +79,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           {
             $match: {
               sourceFile,
+              userEmail,
               c: "NETWORK",
               msg: "client metadata",
               "attr.doc.driver.name": {
@@ -99,6 +108,29 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
               },
               remoteIPs: { $addToSet: "$attr.remote" },
               count: { $sum: 1 }
+            }
+          },
+          {
+            $set: {
+              _id: {
+                driverName: {
+                  $arrayElemAt: [
+                    {
+                      $split: ["$_id.driverName", "|"]
+                    },
+                    0
+                  ]
+                },
+                driverVersion: {
+                  $arrayElemAt: [
+                    {
+                      $split: ["$_id.driverVersion", "|"]
+                    },
+                    0
+                  ]
+                },
+                mongodbVersion: "$_id.mongodbVersion"
+              }
             }
           },
           {
@@ -140,6 +172,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           { 
             $match: { 
               sourceFile,
+              userEmail,
               //msg: { $regex: RegExp("slow query", "i") }
               msg: "Slow query"
             }
@@ -176,6 +209,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           { 
             $match: { 
               sourceFile,
+              userEmail,
               msg: "Slow query",
               // Exclude system databases
               /*"attr.ns": { 
@@ -209,6 +243,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
                 }
               ]*/
             }
+          },
+          {
+            $sort:{"attr.durationMillis":-1}
           },
           {
             $project: {
@@ -348,12 +385,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
               duration: { $exists: true, $gte: 0 } // Ensure we have valid duration
             }
           },
-          { $sort: { "duration": -1 } }
+          //{ $sort: { "duration": -1 } }
         ];
         
         // Log the query being sent to MongoDB
         console.log('🔍 SLOW QUERIES AGGREGATION PIPELINE:');
-        console.log(JSON.stringify(slowQueriesPipeline, null, 2));        const result = await collection.aggregate(slowQueriesPipeline).toArray();
+        console.log(JSON.stringify(slowQueriesPipeline, null, 2));       
+        const result = await collection.aggregate(slowQueriesPipeline).toArray();
         console.log(`⏱️  Slow Queries Query (LARGEST): ${Date.now() - queryStart}ms`);
         return result;
       })(),
@@ -365,6 +403,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           { 
             $match: { 
               sourceFile,
+              userEmail,
               $or: [
                 { c: "ACCESS" },
                 { msg: { $regex: /auth/i } },
@@ -414,6 +453,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           { 
             $match: { 
               sourceFile,
+              userEmail,
               $or: [
                 { msg: { $regex: /index/i } },
                 { "attr.planSummary": { $exists: true } }
@@ -441,6 +481,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           { 
             $match: { 
               sourceFile,
+              userEmail,
               $or: [
                 { c: "CONTROL" },
                 { msg: { $regex: /start|stop|restart|shutdown/i } },
