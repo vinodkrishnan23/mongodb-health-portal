@@ -2143,6 +2143,9 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                       {selectedQuery.queryHash && (
                         <div><span className="text-gray-600">Query Hash:</span> <span className="text-gray-700 font-mono text-sm">{selectedQuery.queryHash}</span></div>
                       )}
+                      {selectedQuery.remoteIP && (
+                        <div><span className="text-gray-600">Remote IP Origin:</span> <span className="text-gray-700 font-mono text-sm">{selectedQuery.remoteIP}</span></div>
+                      )}
                     </div>
                   </div>
 

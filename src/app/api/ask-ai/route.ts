@@ -10,7 +10,7 @@ if (!process.env.GOOGLE_AI_API_KEY) {
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || '');
 
 // Use a consistent, available model.
-const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+const model = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
 
 // Helper function for retrying API calls with exponential backoff
 async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 3, initialDelay = 1000): Promise<T> {
@@ -127,7 +127,11 @@ You are a world-class MongoDB Performance Engineer. Your task is to analyze a sl
 
 Your response MUST be in Markdown and STRICTLY follow the structure in the <OUTPUT_TEMPLATE>. Do not add any commentary before or after the response.
 
-Analyze the provided <QUERY_DATA> to fill out the template.
+Analyze the provided <QUERY_DATA> to fill out the template,Clearly analyze planSummary, pipeline other fields properly.
+
+Compare the index used in planSummary with the index you are planning to suggest. Look at all metrics in <QUERY_DATA> and decide if the index is efficient or not.
+
+Suggest a new index only If the index is missing or inefficient (e.g., COLLSCAN,IXSCAN with a bad efficiency ratio),For example if a query is {a:1,b:1,c:1} and an index is {a:1,b:1,c:1,d:1} then don't suggest a new index as MongoDB can use the initial fields—or "prefix"—of a compound index to satisfy queries that only filter on those initial fields.
 </INSTRUCTIONS>
 
 <QUERY_DATA>
