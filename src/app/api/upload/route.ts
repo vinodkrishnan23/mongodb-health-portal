@@ -15,6 +15,189 @@ import pLimit from 'p-limit';
 // function cleanIncompleteClusterTime(obj: any): any { ... }
 // function processJsonLogLine(line: string, metadata: any): any { ... }
 
+// Function to clean up file names by extracting everything before the first dot 
+function cleanFileName(fileName: string): string { 
+// Find the first dot and take everything before it 
+const firstDotIndex = fileName.indexOf('.'); 
+if (firstDotIndex !== -1) { 
+return fileName.substring(0, firstDotIndex); 
+} 
+    
+// If no dot found, return the original filename 
+return fileName; 
+} 
+
+// Function to recursively clean keys that start with $ 
+function cleanDollarKeys(obj: any): any { 
+if (obj === null || typeof obj !== 'object') { 
+return obj; 
+} 
+    
+if (Array.isArray(obj)) { 
+return obj.map(cleanDollarKeys); 
+} 
+    
+const cleaned: any = {}; 
+    
+for (const [key, value] of Object.entries(obj)) { 
+let newKey = key; 
+      
+// Remove $ prefix or replace with underscore 
+if (key.startsWith('$')) { 
+newKey = key.substring(1); // Remove $ prefix 
+// Alternative: newKey = '_' + key.substring(1); // Replace with underscore 
+} 
+      
+// Recursively clean nested objects 
+cleaned[newKey] = cleanDollarKeys(value); 
+} 
+    
+return cleaned; 
+} 
+
+// Function to check if clusterTime path is complete and remove if incomplete 
+function cleanIncompleteClusterTime(obj: any): any { 
+if (obj === null || typeof obj !== 'object') { 
+return obj; 
+} 
+    
+if (Array.isArray(obj)) { 
+return obj.map(cleanIncompleteClusterTime); 
+} 
+    
+const cleaned = { ...obj }; 
+    
+// Check for incomplete $clusterTime in attr.command 
+if (cleaned.attr && cleaned.attr.command && cleaned.attr.command.clusterTime) { 
+const clusterTime = cleaned.attr.command.clusterTime; 
+      
+// Check if the path clusterTime.clusterTime.timestamp.t exists 
+const hasCompleteClusterTime = 
+clusterTime.clusterTime && 
+clusterTime.clusterTime.timestamp && 
+clusterTime.clusterTime.timestamp.t !== undefined; 
+      
+if (!hasCompleteClusterTime) { 
+// Remove the incomplete clusterTime object 
+delete cleaned.attr.command.clusterTime; 
+} 
+} 
+    
+// Also check at root level clusterTime 
+if (cleaned.clusterTime) { 
+const clusterTime = cleaned.clusterTime; 
+      
+// Check if the path clusterTime.clusterTime.timestamp.t exists 
+const hasCompleteClusterTime = 
+clusterTime.clusterTime && 
+clusterTime.clusterTime.timestamp && 
+clusterTime.clusterTime.timestamp.t !== undefined; 
+      
+if (!hasCompleteClusterTime) { 
+// Remove the incomplete clusterTime object 
+delete cleaned.clusterTime; 
+} 
+} 
+    
+// Recursively clean nested objects 
+for (const [key, value] of Object.entries(cleaned)) { 
+if (typeof value === 'object' && value !== null) { 
+cleaned[key] = cleanIncompleteClusterTime(value); 
+} 
+} 
+    
+return cleaned; 
+}
+
+// Function to process a single MongoDB JSON log line
+function processJsonLogLine(line: string, metadata: any): any {
+  try {
+    // Clean the line - remove array brackets and trailing commas
+    let cleanedLine = line.trim();
+    cleanedLine = cleanedLine.replace(/^\[/, '').replace(/,\s*$/, '').replace(/\]\s*$/, '');
+    if (!cleanedLine) {
+      return null;
+    }
+
+    // Parse the cleaned JSON line
+    let jsonLog = JSON.parse(cleanedLine);
+
+    // --- NEWLY INTEGRATED STEPS ---
+    // 1. First, clean any incomplete clusterTime objects.
+    jsonLog = cleanIncompleteClusterTime(jsonLog);
+
+    // 2. Next, recursively clean keys starting with '$'.
+    jsonLog = cleanDollarKeys(jsonLog);
+    // --- END OF NEW STEPS ---
+
+    // Extract timestamp from t.$date field and convert to Date object
+    let logTimestamp = null;
+    let queryStartTime = null;
+    if (jsonLog.t && jsonLog.t.date) { // Note: cleanDollarKeys changes t.$date to t.date
+      try {
+        logTimestamp = new Date(jsonLog.t.date);
+        if (isNaN(logTimestamp.getTime())) {
+          logTimestamp = null;
+        }
+      } catch (dateError) {
+        console.warn(`Failed to parse timestamp from t.date: ${jsonLog.t.date}`, dateError);
+        logTimestamp = null;
+      }
+    } else if (jsonLog.t && typeof jsonLog.t === 'string') {
+      try {
+        logTimestamp = new Date(jsonLog.t);
+        if (isNaN(logTimestamp.getTime())) {
+          logTimestamp = null;
+        }
+      } catch (dateError) {
+        console.warn(`Failed to parse timestamp from t: ${jsonLog.t}`, dateError);
+        logTimestamp = null;
+      }
+    }
+    
+    // Note: The '$' from '$clusterTime' and '$timestamp' will be removed by cleanDollarKeys
+    if (jsonLog.attr && jsonLog.attr.command && jsonLog.attr.command.clusterTime && jsonLog.attr.command.clusterTime.clusterTime && jsonLog.attr.command.clusterTime.clusterTime.timestamp && jsonLog.attr.command.clusterTime.clusterTime.timestamp.t) {
+        try {
+            queryStartTime = new Date(jsonLog.attr.command.clusterTime.clusterTime.timestamp.t * 1000);
+        } catch (dateError) {
+            console.warn(`Failed to parse timestamp from attr.command.clusterTime`, dateError);
+            queryStartTime = null;
+        }
+    }
+    else if (logTimestamp && jsonLog.attr && jsonLog.attr.durationMillis){
+        queryStartTime = new Date (logTimestamp.getTime() - jsonLog.attr.durationMillis);
+    }
+    else {
+        queryStartTime = logTimestamp; // Fallback to log timestamp
+    }
+    
+    // Add metadata and extracted timestamp to the existing JSON structure
+    return {
+      ...jsonLog,
+      logTimestamp: logTimestamp,
+      queryStartTime: queryStartTime,
+      sourceFile: metadata.sourceFile,
+      uploadDate: metadata.uploadDate,
+      uploadSessionId: metadata.uploadSessionId,
+      lineNumber: metadata.lineNumber,
+      fileClassification: metadata.fileClassification,
+      mongodbVersion: metadata.mongodbVersion,
+      userEmail: metadata.userEmail,
+      userName: metadata.userName,
+      userId: metadata.userId
+    };
+    
+  } catch (jsonError: any) {
+    // If parsing fails, return the original line with metadata
+    console.warn(`Failed to parse JSON line ${metadata.lineNumber}:`, jsonError.message);
+    return {
+      originalLine: line,
+      parseError: true,
+      // ... (rest of metadata)
+    };
+  }
+}
+
 
 // The new, revamped POST handler
 export async function POST(request: NextRequest): Promise<NextResponse<UploadResponse>> {
@@ -125,93 +308,35 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
 }
 
 // --- New Helper Function for Chunk Processing ---
-// Function to process a single MongoDB JSON log line
-function processJsonLogLine(line: string, metadata: any): any {
-  try {
-    // Clean the line - remove array brackets and trailing commas
-    let cleanedLine = line.trim();
-    cleanedLine = cleanedLine.replace(/^\[/, '').replace(/,\s*$/, '').replace(/\]\s*$/, '');
-    if (!cleanedLine) {
-      return null;
-    }
+async function processFileInChunks(filePath: string, options: any) {
+  const { cleanedFileName, classification, mongodbVersion, uploadSessionId, userInfo, isGzipped } = options;
+  const CHUNK_SIZE = 200 * 1024 * 1024; // 200 MB
+  const fileStats = await fs.stat(filePath);
+  const totalSize = fileStats.size;
+  const readPromises: Promise<any[]>[] = [];
 
-    // Parse the cleaned JSON line
-    let jsonLog = JSON.parse(cleanedLine);
+  for (let start = 0; start < totalSize; start += CHUNK_SIZE) {
+      const end = Math.min(start + CHUNK_SIZE - 1, totalSize - 1);
+      const readStream = createReadStream(filePath, { start, end });
 
-    // --- NEWLY INTEGRATED STEPS ---
-    // 1. First, clean any incomplete clusterTime objects.
-    jsonLog = cleanIncompleteClusterTime(jsonLog);
-
-    // 2. Next, recursively clean keys starting with '$'.
-    jsonLog = cleanDollarKeys(jsonLog);
-    // --- END OF NEW STEPS ---
-
-    // Extract timestamp from t.$date field and convert to Date object
-    let logTimestamp = null;
-    let queryStartTime = null;
-    if (jsonLog.t && jsonLog.t.date) { // Note: cleanDollarKeys changes t.$date to t.date
-      try {
-        logTimestamp = new Date(jsonLog.t.date);
-        if (isNaN(logTimestamp.getTime())) {
-          logTimestamp = null;
-        }
-      } catch (dateError) {
-        console.warn(`Failed to parse timestamp from t.date: ${jsonLog.t.date}`, dateError);
-        logTimestamp = null;
-      }
-    } else if (jsonLog.t && typeof jsonLog.t === 'string') {
-      try {
-        logTimestamp = new Date(jsonLog.t);
-        if (isNaN(logTimestamp.getTime())) {
-          logTimestamp = null;
-        }
-      } catch (dateError) {
-        console.warn(`Failed to parse timestamp from t: ${jsonLog.t}`, dateError);
-        logTimestamp = null;
-      }
-    }
-    
-    // Note: The '$' from '$clusterTime' and '$timestamp' will be removed by cleanDollarKeys
-    if (jsonLog.attr && jsonLog.attr.command && jsonLog.attr.command.clusterTime && jsonLog.attr.command.clusterTime.clusterTime && jsonLog.attr.command.clusterTime.clusterTime.timestamp && jsonLog.attr.command.clusterTime.clusterTime.timestamp.t) {
-        try {
-            queryStartTime = new Date(jsonLog.attr.command.clusterTime.clusterTime.timestamp.t * 1000);
-        } catch (dateError) {
-            console.warn(`Failed to parse timestamp from attr.command.clusterTime`, dateError);
-            queryStartTime = null;
-        }
-    }
-    else if (logTimestamp && jsonLog.attr && jsonLog.attr.durationMillis){
-        queryStartTime = new Date (logTimestamp.getTime() - jsonLog.attr.durationMillis);
-    }
-    else {
-        queryStartTime = logTimestamp; // Fallback to log timestamp
-    }
-    
-    // Add metadata and extracted timestamp to the existing JSON structure
-    return {
-      ...jsonLog,
-      logTimestamp: logTimestamp,
-      queryStartTime: queryStartTime,
-      sourceFile: metadata.sourceFile,
-      uploadDate: metadata.uploadDate,
-      uploadSessionId: metadata.uploadSessionId,
-      lineNumber: metadata.lineNumber,
-      fileClassification: metadata.fileClassification,
-      mongodbVersion: metadata.mongodbVersion,
-      userEmail: metadata.userEmail,
-      userName: metadata.userName,
-      userId: metadata.userId
-    };
-    
-  } catch (jsonError: any) {
-    // If parsing fails, return the original line with metadata
-    console.warn(`Failed to parse JSON line ${metadata.lineNumber}:`, jsonError.message);
-    return {
-      originalLine: line,
-      parseError: true,
-      // ... (rest of metadata)
-    };
+      // Decompress if gzipped, otherwise pass through
+      const stream = isGzipped ? readStream.pipe(gunzip()) : readStream;
+      
+      readPromises.push(processStreamChunk(stream, {
+          cleanedFileName,
+          classification,
+          mongodbVersion,
+          uploadSessionId,
+          userInfo
+      }));
   }
+  
+  const chunkResults = await Promise.all(readPromises);
+  
+  const allDocuments = chunkResults.flat();
+  const totalLines = allDocuments.reduce((acc, doc) => Math.max(acc, doc.lineNumber || 0), 0);
+  
+  return { documents: allDocuments, linesProcessed: totalLines };
 }
 
 async function processStreamChunk(stream: NodeJS.ReadableStream, metadataOptions: any): Promise<any[]> {
