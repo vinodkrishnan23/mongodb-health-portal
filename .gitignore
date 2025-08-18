@@ -73,7 +73,7 @@ pids/
 *.pid.lock
 
 # Logs directory
-logs/
+#logs/
 
 # Optional eslint cache
 .eslintcache
