@@ -201,11 +201,14 @@ function processJsonLogLine(line: string, metadata: any): any {
 
 // The new, revamped POST handler
 export async function POST(request: NextRequest): Promise<NextResponse<UploadResponse>> {
+  console.log('[UPLOAD API] POST handler invoked');
   try {
-    const formData = await request.formData();
+  const formData = await request.formData();
+  console.log('[UPLOAD API] Received formData');
     
     // --- User Info and File Classification Parsing (Unchanged) ---
-    const userDataString = formData.get('user');
+  const userDataString = formData.get('user');
+  console.log('[UPLOAD API] userDataString:', userDataString);
     let userInfo = null;
     if (userDataString && typeof userDataString === 'string') {
       try {
@@ -215,12 +218,15 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
       }
     }
     if (!userInfo || !userInfo.email || !userInfo.userId) {
+      console.error('[UPLOAD API] Missing user info:', userInfo);
       return NextResponse.json({ success: false, message: 'User authentication required', error: 'USER_AUTH_REQUIRED' }, { status: 401 });
     }
 
     const files: Blob[] = [];
     let fileClassifications: Array<{fileName: string, cleanedName?: string, classification: string, mongodbVersion?: string, index: number}> = [];
     for (const [key, value] of formData.entries()) {
+      // Log each form entry
+      console.log(`[UPLOAD API] form entry: ${key}`, value);
       if (key === 'file' && typeof (value as any).arrayBuffer === 'function') {
         files.push(value as Blob);
       }
@@ -231,6 +237,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
       }
     }
     if (files.length === 0) {
+      console.error('[UPLOAD API] No files uploaded');
       return NextResponse.json({ success: false, message: 'No files uploaded', error: 'FILES_MISSING' }, { status: 400 });
     }
 
@@ -239,7 +246,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
     let fileResults: any[] = [];
     let allProcessedDocs: any[] = [];
 
-    for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+  console.log(`[UPLOAD API] Starting file processing for ${files.length} files`);
+  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
       const file = files[fileIndex];
       const fileInfo = fileClassifications.find(fc => fc.index === fileIndex) || { fileName: `uploaded_${fileIndex}.log`, classification: 'primary', mongodbVersion: '' };
       const { fileName, classification, mongodbVersion } = fileInfo;
@@ -249,12 +257,14 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
       // --- 1. Save File to a Temporary Location ---
       const tempDir = os.tmpdir();
       const tempFilePath = path.join(tempDir, `upload_${Date.now()}_${fileName}`);
-      try {
+  console.log(`[UPLOAD API] Processing file: ${fileName}, gzipped: ${isGzipped}`);
+  try {
         const buffer = Buffer.from(await file.arrayBuffer());
-        await fs.writeFile(tempFilePath, buffer);
+  await fs.writeFile(tempFilePath, buffer);
+  console.log(`[UPLOAD API] Saved file to temp path: ${tempFilePath}`);
 
         // --- 2. Process File in Chunks ---
-        const { documents, linesProcessed } = await processFileInChunks(tempFilePath, {
+  const { documents, linesProcessed } = await processFileInChunks(tempFilePath, {
             cleanedFileName,
             classification,
             mongodbVersion,
@@ -263,46 +273,55 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
             isGzipped,
         });
 
-        allProcessedDocs.push(...documents);
-        totalEntriesCreated += documents.length;
-        fileResults.push({ filename: fileName, cleanedFilename: cleanedFileName, classification, success: true, entriesCreated: documents.length, linesProcessed });
+  console.log(`[UPLOAD API] Finished chunked processing for file: ${fileName}. Documents: ${documents.length}, Lines processed: ${linesProcessed}`);
+  allProcessedDocs.push(...documents);
+  totalEntriesCreated += documents.length;
+  fileResults.push({ filename: fileName, cleanedFilename: cleanedFileName, classification, success: true, entriesCreated: documents.length, linesProcessed });
 
       } catch (fileProcessingError: any) {
-        console.error(`Error processing file ${fileName}:`, fileProcessingError);
+        console.error(`[UPLOAD API] Error processing file ${fileName}:`, fileProcessingError);
         fileResults.push({ filename: fileName, cleanedFilename: cleanedFileName, classification, success: false, message: fileProcessingError.message || 'Error processing file', error: 'FILE_PROCESSING_ERROR' });
       } finally {
         // --- 3. Cleanup Temporary File ---
-        await fs.unlink(tempFilePath).catch(err => console.error(`Failed to delete temp file: ${tempFilePath}`, err));
+        await fs.unlink(tempFilePath).catch(err => console.error(`[UPLOAD API] Failed to delete temp file: ${tempFilePath}`, err));
       }
     }
 
     // --- 4. Bulk Insert All Processed Documents ---
     let allInsertedIds = {};
     if (allProcessedDocs.length > 0) {
+      console.log(`[UPLOAD API] Inserting ${allProcessedDocs.length} documents into MongoDB`);
       try {
         const collection = await getLogFilesCollection();
         // For very large uploads, consider batching this insertMany as well
         const result = await collection.insertMany(allProcessedDocs, { ordered: false });
         allInsertedIds = result.insertedIds;
+        console.log(`[UPLOAD API] MongoDB insertMany success. Inserted IDs:`, allInsertedIds);
       } catch (mongoError) {
-        console.error("MongoDB Insertion Error:", mongoError);
+        console.error("[UPLOAD API] MongoDB Insertion Error:", mongoError);
         throw new Error('Failed to insert documents into MongoDB');
       }
     }
 
     // --- Statistics and Response (Unchanged) ---
+    // Calculate additional stats to match UploadResponse type
     const stats = {
-        totalEntries: allProcessedDocs.length,
-        successfullyParsed: allProcessedDocs.filter((entry: any) => !entry.parseError).length,
-        parseErrors: allProcessedDocs.filter((entry: any) => entry.parseError).length,
-        // ... add other stats as needed
+      totalEntries: allProcessedDocs.length,
+      successfullyParsed: allProcessedDocs.filter((entry: any) => !entry.parseError).length,
+      parseErrors: allProcessedDocs.filter((entry: any) => entry.parseError).length,
+      withTimestamp: allProcessedDocs.filter((entry: any) => entry.logTimestamp).length,
+      withLevel: allProcessedDocs.filter((entry: any) => entry.s || entry.severity).length,
+      withComponent: allProcessedDocs.filter((entry: any) => entry.c || entry.component).length,
+      withContext: allProcessedDocs.filter((entry: any) => entry.ctx || entry.context).length,
+      withMessage: allProcessedDocs.filter((entry: any) => entry.msg || entry.message).length
     };
     const successfulFiles = fileResults.filter(f => f.success).length;
     const failedFiles = fileResults.filter(f => !f.success).length;
-    return NextResponse.json({ success: successfulFiles > 0, message: `Processed ${files.length} files. ${successfulFiles} successful, ${failedFiles} failed. Created ${totalEntriesCreated} total documents.`, entriesCreated: totalEntriesCreated, uploadSessionId, stats, insertedIds: allInsertedIds, fileResults });
+  console.log(`[UPLOAD API] Returning response:`, { success: successfulFiles > 0, message: `Processed ${files.length} files. ${successfulFiles} successful, ${failedFiles} failed. Created ${totalEntriesCreated} total documents.`, entriesCreated: totalEntriesCreated, uploadSessionId, stats, insertedIds: allInsertedIds, fileResults });
+  return NextResponse.json({ success: successfulFiles > 0, message: `Processed ${files.length} files. ${successfulFiles} successful, ${failedFiles} failed. Created ${totalEntriesCreated} total documents.`, entriesCreated: totalEntriesCreated, uploadSessionId, stats, insertedIds: allInsertedIds, fileResults });
 
   } catch (error: any) {
-    console.error("API Error:", error);
+    console.error("[UPLOAD API] API Error:", error);
     return NextResponse.json({ success: false, message: 'Internal server error', error: error?.message || 'SERVER_ERROR' }, { status: 500 });
   }
 }
@@ -310,88 +329,104 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
 // --- New Helper Function for Chunk Processing ---
 async function processFileInChunks(filePath: string, options: any) {
   const { cleanedFileName, classification, mongodbVersion, uploadSessionId, userInfo, isGzipped } = options;
+  console.log(`[processFileInChunks] Starting for file: ${filePath}, gzipped: ${isGzipped}`);
   const CHUNK_SIZE = 200 * 1024 * 1024; // 200 MB
   const fileStats = await fs.stat(filePath);
   const totalSize = fileStats.size;
+  console.log(`[processFileInChunks] File size: ${totalSize} bytes`);
   const readPromises: Promise<any[]>[] = [];
 
   for (let start = 0; start < totalSize; start += CHUNK_SIZE) {
-      const end = Math.min(start + CHUNK_SIZE - 1, totalSize - 1);
-      const readStream = createReadStream(filePath, { start, end });
+    const end = Math.min(start + CHUNK_SIZE - 1, totalSize - 1);
+    console.log(`[processFileInChunks] Creating readStream for chunk: ${start} - ${end}`);
+    const readStream = createReadStream(filePath, { start, end });
 
-      // Decompress if gzipped, otherwise pass through
-      const stream = isGzipped ? readStream.pipe(gunzip()) : readStream;
-      
-      readPromises.push(processStreamChunk(stream, {
-          cleanedFileName,
-          classification,
-          mongodbVersion,
-          uploadSessionId,
-          userInfo
-      }));
+    // Decompress if gzipped, otherwise pass through
+    let stream: NodeJS.ReadableStream;
+    if (isGzipped) {
+      // Use zlib.createGunzip() for proper stream handling
+      const { createGunzip } = await import('zlib');
+      stream = readStream.pipe(createGunzip());
+    } else {
+      stream = readStream;
+    }
+    readPromises.push(processStreamChunk(stream, {
+      cleanedFileName,
+      classification,
+      mongodbVersion,
+      uploadSessionId,
+      userInfo
+    }));
   }
   
   const chunkResults = await Promise.all(readPromises);
+  console.log(`[processFileInChunks] All chunks processed. Number of chunks: ${chunkResults.length}`);
   
   const allDocuments = chunkResults.flat();
   const totalLines = allDocuments.reduce((acc, doc) => Math.max(acc, doc.lineNumber || 0), 0);
+  console.log(`[processFileInChunks] Total documents: ${allDocuments.length}, Total lines processed: ${totalLines}`);
   
   return { documents: allDocuments, linesProcessed: totalLines };
 }
 
 async function processStreamChunk(stream: NodeJS.ReadableStream, metadataOptions: any): Promise<any[]> {
-    const documents: any[] = [];
-    let buffer = '';
-    let lineNumber = 0; // Line numbers will be relative to the chunk, but this is a necessary tradeoff
+  const documents: any[] = [];
+  let buffer = '';
+  let lineNumber = 0; // Line numbers will be relative to the chunk, but this is a necessary tradeoff
+  console.log('[processStreamChunk] Stream chunk processing started');
 
-    return new Promise((resolve, reject) => {
-        stream.on('data', (chunk) => {
-            buffer += chunk.toString('utf-8');
-            let lastNewline;
-            while ((lastNewline = buffer.lastIndexOf('\n')) !== -1) {
-                const lines = buffer.substring(0, lastNewline).split('\n');
-                buffer = buffer.substring(lastNewline + 1);
+  return new Promise((resolve, reject) => {
+    stream.on('data', (chunk) => {
+      buffer += chunk.toString('utf-8');
+      let lastNewline;
+      while ((lastNewline = buffer.lastIndexOf('\n')) !== -1) {
+        const lines = buffer.substring(0, lastNewline).split('\n');
+        buffer = buffer.substring(lastNewline + 1);
 
-                for (const line of lines) {
-                    if (line.trim() === '') continue;
-                    lineNumber++;
-                    const lineMetadata = {
-                      sourceFile: metadataOptions.cleanedFileName,
-                      uploadDate: new Date(),
-                      uploadSessionId: metadataOptions.uploadSessionId,
-                      lineNumber: lineNumber, // Note: This is chunk-local, not file-global
-                      fileClassification: metadataOptions.classification,
-                      mongodbVersion: metadataOptions.mongodbVersion,
-                      userEmail: metadataOptions.userInfo.email,
-                      userName: metadataOptions.userInfo.name,
-                      userId: metadataOptions.userInfo.userId
-                    };
-                    const doc = processJsonLogLine(line, lineMetadata);
-                    if (doc) documents.push(doc);
-                }
-            }
-        });
-
-        stream.on('end', () => {
-            if (buffer.trim()) {
-                lineNumber++;
-                 const lineMetadata = {
-                      sourceFile: metadataOptions.cleanedFileName,
-                      uploadDate: new Date(),
-                      uploadSessionId: metadataOptions.uploadSessionId,
-                      lineNumber: lineNumber,
-                      fileClassification: metadataOptions.classification,
-                      mongodbVersion: metadataOptions.mongodbVersion,
-                      userEmail: metadataOptions.userInfo.email,
-                      userName: metadataOptions.userInfo.name,
-                      userId: metadataOptions.userInfo.userId
-                    };
-                const doc = processJsonLogLine(buffer, lineMetadata);
-                if (doc) documents.push(doc);
-            }
-            resolve(documents);
-        });
-        
-        stream.on('error', reject);
+        for (const line of lines) {
+          if (line.trim() === '') continue;
+          lineNumber++;
+          const lineMetadata = {
+            sourceFile: metadataOptions.cleanedFileName,
+            uploadDate: new Date(),
+            uploadSessionId: metadataOptions.uploadSessionId,
+            lineNumber: lineNumber, // Note: This is chunk-local, not file-global
+            fileClassification: metadataOptions.classification,
+            mongodbVersion: metadataOptions.mongodbVersion,
+            userEmail: metadataOptions.userInfo.email,
+            userName: metadataOptions.userInfo.name,
+            userId: metadataOptions.userInfo.userId
+          };
+          const doc = processJsonLogLine(line, lineMetadata);
+          if (doc) documents.push(doc);
+        }
+      }
     });
+
+    stream.on('end', () => {
+      if (buffer.trim()) {
+        lineNumber++;
+         const lineMetadata = {
+            sourceFile: metadataOptions.cleanedFileName,
+            uploadDate: new Date(),
+            uploadSessionId: metadataOptions.uploadSessionId,
+            lineNumber: lineNumber,
+            fileClassification: metadataOptions.classification,
+            mongodbVersion: metadataOptions.mongodbVersion,
+            userEmail: metadataOptions.userInfo.email,
+            userName: metadataOptions.userInfo.name,
+            userId: metadataOptions.userInfo.userId
+          };
+        const doc = processJsonLogLine(buffer, lineMetadata);
+        if (doc) documents.push(doc);
+      }
+      console.log(`[processStreamChunk] Stream ended. Documents processed: ${documents.length}`);
+      resolve(documents);
+    });
+        
+    stream.on('error', (err) => {
+      console.error('[processStreamChunk] Stream error:', err);
+      reject(err);
+    });
+  });
 }
