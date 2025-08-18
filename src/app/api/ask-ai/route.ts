@@ -10,7 +10,7 @@ if (!process.env.GOOGLE_AI_API_KEY) {
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || '');
 
 // Use a consistent, available model.
-const model = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
 // Helper function for retrying API calls with exponential backoff
 async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 3, initialDelay = 1000): Promise<T> {
@@ -39,8 +39,6 @@ export async function POST(request: NextRequest) {
     if (!process.env.GOOGLE_AI_API_KEY) {
       const errorMessage = 'AI service is not configured. Please set GOOGLE_AI_API_KEY environment variable.';
       console.error('❌', errorMessage);
-    
-
       
       const encoder = new TextEncoder();
       const errorStream = new ReadableStream({
@@ -68,11 +66,9 @@ export async function POST(request: NextRequest) {
     }
 
     const collection = await getAskAiCollection();
-    const userEmail = request.headers.get('x-user-email'); 
-    console.log("userEmail:", request.headers);
+    
     const queryIdentifier = {
       sourceFile,
-      userEmail,
       queryHash: queryHash || null,
       numYields: numYields || null,
       namespace: query.namespace || null,
@@ -127,11 +123,7 @@ You are a world-class MongoDB Performance Engineer. Your task is to analyze a sl
 
 Your response MUST be in Markdown and STRICTLY follow the structure in the <OUTPUT_TEMPLATE>. Do not add any commentary before or after the response.
 
-Analyze the provided <QUERY_DATA> to fill out the template,Clearly analyze planSummary, pipeline other fields properly.
-
-Compare the index used in planSummary with the index you are planning to suggest. Look at all metrics in <QUERY_DATA> and decide if the index is efficient or not.
-
-Suggest a new index only If the index is missing or inefficient (e.g., COLLSCAN,IXSCAN with a bad efficiency ratio),For example if a query is {a:1,b:1,c:1} and an index is {a:1,b:1,c:1,d:1} then don't suggest a new index as MongoDB can use the initial fields—or "prefix"—of a compound index to satisfy queries that only filter on those initial fields.
+Analyze the provided <QUERY_DATA> to fill out the template.
 </INSTRUCTIONS>
 
 <QUERY_DATA>
@@ -165,7 +157,7 @@ ${JSON.stringify(query, null, 2)}
 \`\`\`javascript
 db.getCollection('${query.namespace?.split('.')[1] || 'collection'}').createIndex({ /* field: 1, anotherField: -1 */ });
 \`\`\`
-- **Rationale:** [Explain why this index helps, referencing the ESR rule, sometimes ESR may not be applicable, so explain why it is not applicable in that case.]
+- **Rationale:** [Explain why this index helps, referencing the ESR rule.]
 - **Expected Impact:** Significant reduction in query duration and documents examined.
 
 **2. Query Restructuring (If Applicable)**
@@ -187,7 +179,7 @@ db.getCollection('${query.namespace?.split('.')[1] || 'collection'}').createInde
     const response = result.response;
     const aiResponse = response.text();
     const usageMetadata = response.usageMetadata;
-    const totalTokens = usageMetadata ? usageMetadata.totalTokenCount : 0;
+    const totalTokens = usageMetadata ? usageMetadata.totalTokens : 0;
 
     console.log(`🪙 Token usage: ${totalTokens} tokens (Prompt: ${usageMetadata?.promptTokenCount}, Response: ${usageMetadata?.candidatesTokenCount})`);
     
@@ -215,7 +207,6 @@ db.getCollection('${query.namespace?.split('.')[1] || 'collection'}').createInde
       ...queryIdentifier,
       aiResponse,
       createdAt: new Date(),
-      rawsageMetadata:usageMetadata,
       tokenUsage: {
           promptTokens: usageMetadata?.promptTokenCount || 0,
           responseTokens: usageMetadata?.candidatesTokenCount || 0,

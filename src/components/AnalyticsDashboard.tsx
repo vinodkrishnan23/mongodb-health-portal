@@ -21,10 +21,9 @@ interface AnalyticsData {
 
 interface AnalyticsDashboardProps {
   sourceFile: string;
-  userEmail?: string;
 }
 
-export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsDashboardProps) {
+export default function AnalyticsDashboard({ sourceFile }: AnalyticsDashboardProps) {
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -82,11 +81,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
   const fetchAnalytics = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/analytics?sourceFile=${encodeURIComponent(sourceFile)}`, {
-        headers: {
-          'x-user-email': userEmail || '',
-        },
-      });
+      const response = await fetch(`/api/analytics?sourceFile=${encodeURIComponent(sourceFile)}`);
       const data = await response.json();
       
       if (data.success) {
@@ -444,7 +439,6 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-user-email': userEmail || ''
         },
         body: JSON.stringify({
           sourceFile,
@@ -2142,9 +2136,6 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                       )}
                       {selectedQuery.queryHash && (
                         <div><span className="text-gray-600">Query Hash:</span> <span className="text-gray-700 font-mono text-sm">{selectedQuery.queryHash}</span></div>
-                      )}
-                      {selectedQuery.remoteIP && (
-                        <div><span className="text-gray-600">Remote IP Origin:</span> <span className="text-gray-700 font-mono text-sm">{selectedQuery.remoteIP}</span></div>
                       )}
                     </div>
                   </div>
