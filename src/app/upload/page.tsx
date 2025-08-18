@@ -124,7 +124,11 @@ export default function UploadPage() {
 
   const fetchStatsForFile = async (sourceFile: string) => {
     try {
-      const response = await fetch(`/api/stats?sourceFile=${encodeURIComponent(sourceFile)}`);
+      const response = await fetch(`/api/stats?sourceFile=${encodeURIComponent(sourceFile)}`, {
+        headers: {
+          'x-user-email': user?.email || '',
+        },
+      });
       const data: StatsResponse = await response.json();
       
       if (data.success) {

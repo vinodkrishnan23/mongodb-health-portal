@@ -10,7 +10,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const collection = await getLogFilesCollection();
     
     // Build match criteria
-    const matchCriteria = sourceFile ? { sourceFile,userEmail } : {};
+    const matchCriteria: any = {};
+    if (sourceFile) {
+      matchCriteria.sourceFile = sourceFile;
+    }
+    if (userEmail) {
+      matchCriteria.userEmail = userEmail;
+    }
     
     // Aggregation pipeline for statistics
     const pipeline = [
