@@ -202,7 +202,7 @@ function processJsonLogLine(line: string, metadata: any): any {
 export async function POST(request: NextRequest): Promise<NextResponse<UploadResponse>> {
   try {
     const formData = await request.formData();
-    
+
     // Get user information from the request
     const userDataString = formData.get('user');
     let userInfo = null;
@@ -210,52 +210,34 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
       try {
         userInfo = JSON.parse(userDataString);
       } catch (e) {
-        return NextResponse.json({
-          success: false,
-          message: 'Invalid user information',
-          error: 'INVALID_USER_DATA'
-        }, { status: 400 });
+        return NextResponse.json({ success: false, message: 'Invalid user information', error: 'INVALID_USER_DATA' }, { status: 400 });
       }
     }
-
     if (!userInfo || !userInfo.email || !userInfo.userId) {
-      return NextResponse.json({
-        success: false,
-        message: 'User authentication required',
-        error: 'USER_AUTH_REQUIRED'
-      }, { status: 401 });
-    }
-    
-    // Get all files from formData
-    const files: File[] = [];
-    for (const [key, value] of formData.entries()) {
-      if (key === 'file' && value instanceof File) {
-        files.push(value);
-      }
+      return NextResponse.json({ success: false, message: 'User authentication required', error: 'USER_AUTH_REQUIRED' }, { status: 401 });
     }
 
-    // Get file classifications (now includes MongoDB version)
+    // Get all files and file classifications from formData
+    const files: Blob[] = [];
     let fileClassifications: Array<{fileName: string, cleanedName?: string, classification: string, mongodbVersion?: string, index: number}> = [];
-    const classificationsData = formData.get('fileClassifications');
-    if (classificationsData && typeof classificationsData === 'string') {
-      try {
-        fileClassifications = JSON.parse(classificationsData);
-      } catch (e) {
-        console.warn('Failed to parse file classifications, using defaults');
+    for (const [key, value] of formData.entries()) {
+      if (key === 'file' && typeof (value as any).arrayBuffer === 'function') {
+        files.push(value as Blob);
+      }
+      if (key === 'fileClassifications' && typeof value === 'string') {
+        try {
+          fileClassifications = JSON.parse(value);
+        } catch (e) {
+          console.warn('Failed to parse file classifications, using defaults');
+        }
       }
     }
-
     if (files.length === 0) {
-      return NextResponse.json({
-        success: false,
-        message: 'No files uploaded',
-        error: 'FILES_MISSING'
-      }, { status: 400 });
+      return NextResponse.json({ success: false, message: 'No files uploaded', error: 'FILES_MISSING' }, { status: 400 });
     }
 
     // Generate unique upload session ID for this batch
     const uploadSessionId = new Date().toISOString() + '_' + Math.random().toString(36).substr(2, 9);
-    
     let totalDocuments: any[] = [];
     let totalEntriesCreated = 0;
     let allInsertedIds: any = {};
@@ -264,86 +246,39 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
     // Process each file
     for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
       const file = files[fileIndex];
-      
-      // Get the classification and MongoDB version for this file
-      const fileClassification = fileClassifications.find(fc => 
-        fc.fileName === file.name && fc.index === fileIndex
-      );
-      const classification = fileClassification?.classification || 'primary'; // Default to primary
+      const fileClassification = fileClassifications.find(fc => fc.index === fileIndex);
+      const fileName = fileClassification?.fileName || `uploaded_${fileIndex}.log`;
+      const classification = fileClassification?.classification || 'primary';
       const mongodbVersion = fileClassification?.mongodbVersion || '';
-      
-      console.log(`Processing file ${fileIndex + 1}/${files.length}: ${file.name} (${classification}, MongoDB ${mongodbVersion})`);
-
-      // Clean up the file name for storage
-      const cleanedFileName = cleanFileName(file.name);
-      console.log(`Cleaned file name: ${file.name} -> ${cleanedFileName}`);
-
-      // Validate file type
+      const cleanedFileName = cleanFileName(fileName);
       const allowedExtensions = ['.log', '.gz'];
-      const isGzipped = file.name.toLowerCase().endsWith('.gz');
-      
-      if (!allowedExtensions.some(ext => file.name.toLowerCase().endsWith(ext))) {
-        fileResults.push({
-          filename: file.name,
-          cleanedFilename: cleanedFileName,
-          classification: classification,
-          success: false,
-          message: 'Invalid file type. Only .log and .gz files are allowed.',
-          error: 'INVALID_FILE_TYPE'
-        });
+      const isGzipped = fileName.toLowerCase().endsWith('.gz');
+      if (!allowedExtensions.some(ext => fileName.toLowerCase().endsWith(ext))) {
+        fileResults.push({ filename: fileName, cleanedFilename: cleanedFileName, classification, success: false, message: 'Invalid file type. Only .log and .gz files are allowed.', error: 'INVALID_FILE_TYPE' });
         continue;
       }
-
       try {
-        console.log(`Starting processing of file: ${file.name} (${file.size} bytes)`);
-        
-        // Create temporary file path
         const tempDir = '/tmp';
-        const tempFilePath = path.join(tempDir, `upload_${Date.now()}_${fileIndex}_${file.name}`);
-
-        // Write uploaded file to temporary location
-        const bytes = await file.arrayBuffer();
-        const buffer = Buffer.from(bytes);
+        const tempFilePath = path.join(tempDir, `upload_${Date.now()}_${fileIndex}_${fileName}`);
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
         await writeFile(tempFilePath, buffer);
-        console.log(`Wrote file to temp location: ${tempFilePath}`);
-
         let content = '';
-        
         if (isGzipped) {
-          // Handle gzipped files with synchronous decompression
           try {
-            console.log(`Decompressing gzipped file: ${file.name}`);
             const decompressed = gunzipSync(buffer);
             content = decompressed.toString('utf-8');
-            console.log(`Successfully decompressed ${file.name}, content length: ${content.length}`);
           } catch (gzipError) {
-            console.error(`Failed to decompress ${file.name}:`, gzipError);
-            throw new Error(`Failed to decompress gzipped file: ${file.name}`);
+            throw new Error(`Failed to decompress gzipped file: ${fileName}`);
           }
         } else {
-          // Handle regular log files
           content = buffer.toString('utf-8');
         }
-
-        // Parse log content into individual entries - line by line processing
         const logLines = content.split('\n');
-        console.log(`Processing ${logLines.length} lines from file: ${file.name}`);
-        
-        // Process each line and create documents for MongoDB
         const fileDocuments: any[] = [];
-        let processedLines = 0;
-        
         for (let i = 0; i < logLines.length; i++) {
           const line = logLines[i];
-          
-          // Skip completely empty lines
-          if (line.trim() === '') {
-            continue;
-          }
-          
-          processedLines++;
-          
-          // Create metadata for this line
+          if (line.trim() === '') continue;
           const lineMetadata = {
             sourceFile: cleanedFileName,
             uploadDate: new Date(),
@@ -355,77 +290,28 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
             userName: userInfo.name,
             userId: userInfo.userId
           };
-          
-          // Process the JSON log line and add metadata
           const document = processJsonLogLine(line, lineMetadata);
-          
-          // Skip if document is null (empty line after cleaning)
-          if (document === null) {
-            continue;
-          }
-          
-          // Log sample document for debugging (first few lines of first file only)
-          if (fileIndex === 0 && i < 3) {
-            console.log(`Sample document for file ${cleanedFileName}, line ${i + 1}:`, JSON.stringify(document, null, 2));
-          }
-          
+          if (document === null) continue;
           fileDocuments.push(document);
-          
-          // Log progress for large files
-          if (processedLines % 1000 === 0) {
-            console.log(`Processed ${processedLines} lines from ${file.name}`);
-          }
         }
-        
-        console.log(`Completed processing ${fileDocuments.length} non-empty lines from ${cleanedFileName} (${file.name})`);
-        
-        // Add file documents to total
         totalDocuments = totalDocuments.concat(fileDocuments);
-        
-        // Clean up temporary file
         await unlink(tempFilePath);
-        
-        fileResults.push({
-          filename: file.name,
-          cleanedFilename: cleanedFileName,
-          classification: classification,
-          success: true,
-          entriesCreated: fileDocuments.length,
-          linesProcessed: logLines.length
-        });
-        
+        fileResults.push({ filename: fileName, cleanedFilename: cleanedFileName, classification, success: true, entriesCreated: fileDocuments.length, linesProcessed: logLines.length });
       } catch (fileProcessingError) {
-        console.error(`Error processing file ${file.name}:`, fileProcessingError);
-        
-        fileResults.push({
-          filename: file.name,
-          cleanedFilename: cleanedFileName,
-          classification: classification,
-          success: false,
-          message: 'Error processing file',
-          error: 'FILE_PROCESSING_ERROR'
-        });
+        fileResults.push({ filename: fileName, cleanedFilename: cleanedFileName, classification, success: false, message: 'Error processing file', error: 'FILE_PROCESSING_ERROR' });
       }
     }
-
-    console.log(`Created ${totalDocuments.length} total documents for MongoDB insertion from ${files.length} files`);
 
     // Insert all documents into MongoDB collection
     if (totalDocuments.length > 0) {
       try {
         const collection = await getLogFilesCollection();
-        console.log(`Inserting ${totalDocuments.length} documents into MongoDB collection: log_entries`);
-        
         const result = await collection.insertMany(totalDocuments);
-        console.log(`Successfully inserted ${Object.keys(result.insertedIds).length} documents`);
         allInsertedIds = result.insertedIds;
         totalEntriesCreated = totalDocuments.length;
       } catch (mongoError) {
-        console.error('MongoDB insertion error:', mongoError);
         throw new Error('Failed to insert documents into MongoDB');
       }
-    } else {
-      console.log('No documents to insert into MongoDB');
     }
 
     // Calculate detailed statistics
@@ -439,26 +325,10 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
       withContext: totalDocuments.filter((entry: any) => !entry.parseError && entry.ctx).length,
       withMessage: totalDocuments.filter((entry: any) => !entry.parseError && entry.msg).length
     };
-
     const successfulFiles = fileResults.filter(f => f.success).length;
     const failedFiles = fileResults.filter(f => !f.success).length;
-
-    return NextResponse.json({
-      success: successfulFiles > 0,
-      message: `Processed ${files.length} files. ${successfulFiles} successful, ${failedFiles} failed. Created ${totalEntriesCreated} total documents in MongoDB.`,
-      entriesCreated: totalEntriesCreated,
-      uploadSessionId: uploadSessionId,
-      stats: stats,
-      insertedIds: allInsertedIds,
-      fileResults: fileResults
-    });
-
-  } catch (error) {
-    console.error('Upload error:', error);
-    return NextResponse.json({
-      success: false,
-      message: 'Internal server error',
-      error: 'SERVER_ERROR'
-    }, { status: 500 });
+    return NextResponse.json({ success: successfulFiles > 0, message: `Processed ${files.length} files. ${successfulFiles} successful, ${failedFiles} failed. Created ${totalEntriesCreated} total documents in MongoDB.`, entriesCreated: totalEntriesCreated, uploadSessionId, stats, insertedIds: allInsertedIds, fileResults });
+  } catch (error: any) {
+    return NextResponse.json({ success: false, message: 'Internal server error', error: error?.message || 'SERVER_ERROR' }, { status: 500 });
   }
 }
