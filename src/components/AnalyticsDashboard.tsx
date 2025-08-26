@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 
 interface AnalyticsData {
@@ -25,6 +25,14 @@ interface AnalyticsDashboardProps {
 }
 
 export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsDashboardProps) {
+  // Simple render counter for debugging
+  const renderCount = useRef(0);
+  renderCount.current += 1;
+  
+  if (renderCount.current % 50 === 0) {
+    console.warn(`⚠️ High render count detected: ${renderCount.current} renders`);
+  }
+  
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,12 +83,27 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
   const [viewportWidth, setViewportWidth] = useState<number>(800);
   const [totalWidth, setTotalWidth] = useState<number>(800);
 
+  // Stabilize slowQueries to prevent filtering useEffect from running constantly
+  const slowQueries = useMemo(() => {
+    console.log('🔍 slowQueries memoized, analytics changed');
+    return analytics?.slowQueries || [];
+  }, [analytics]);
+
   useEffect(() => {
-    fetchAnalytics();
-  }, [sourceFile]);
+    console.log('🚀 fetchAnalytics useEffect triggered for:', { sourceFile, userEmail });
+    
+    // Debounce to prevent rapid successive calls
+    const timeoutId = setTimeout(() => {
+      fetchAnalytics();
+    }, 100);
+    
+    return () => clearTimeout(timeoutId);
+  }, [sourceFile, userEmail]);
 
   const fetchAnalytics = async () => {
+    console.log('📡 fetchAnalytics called');
     try {
+      console.log('📡 Setting loading to true');
       setLoading(true);
       const response = await fetch(`/api/analytics?sourceFile=${encodeURIComponent(sourceFile)}`, {
         headers: {
@@ -90,16 +113,18 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
       const data = await response.json();
       
       if (data.success) {
+        console.log('📊 Setting analytics data');
         setAnalytics(data.analytics);
         console.log('Analytics data received:', data.analytics);
         console.log('Slow queries:', data.analytics.slowQueries?.length || 0);
         console.log('Timestamp range:', data.analytics.timestampRange);
         
-        // Initialize filtered queries with all data
-        setFilteredQueries(data.analytics.slowQueries || []);
+        // Don't set filteredQueries here - let the filtering useEffect handle it
+        console.log('📊 Skipping initial filtered queries - letting useEffect handle it');
         
         // Set default date range based on overall log file timestamp range
         if (data.analytics.timestampRange?.minTimestamp && data.analytics.timestampRange?.maxTimestamp) {
+          console.log('📊 Setting date range');
           const minDate = new Date(data.analytics.timestampRange.minTimestamp);
           const maxDate = new Date(data.analytics.timestampRange.maxTimestamp);
           setStartDate(minDate.toISOString().split('T')[0]);
@@ -212,9 +237,14 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
 
   // Filter queries when date/time range or time filter changes
   useEffect(() => {
-    if (!analytics?.slowQueries) return;
+    console.log('🔎 Filtering useEffect triggered, slowQueries count:', slowQueries.length);
+    if (!slowQueries.length) {
+      console.log('🔎 No slowQueries, clearing filteredQueries');
+      setFilteredQueries([]);
+      return;
+    }
 
-    let filtered = analytics.slowQueries;
+    let filtered = [...slowQueries];
 
     // Apply operation type filter
     if (operationFilter) {
@@ -291,8 +321,8 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     }
 
     setFilteredQueries(filtered);
-    console.log(`Filtered queries: ${filtered.length} out of ${analytics.slowQueries.length}`);
-  }, [analytics?.slowQueries, startDate, endDate, startTime, endTime, timeFilter, operationFilter, namespaceFilter, inMemorySortsFilter, fromMultiPlannerFilter, excludeSystemNamespaces]);
+    console.log(`Filtered queries: ${filtered.length} out of ${slowQueries.length}`);
+  }, [slowQueries, startDate, endDate, startTime, endTime, timeFilter, operationFilter, namespaceFilter, inMemorySortsFilter, fromMultiPlannerFilter, excludeSystemNamespaces]);
 
   // Handle viewport width changes and scrolling boundaries
   useEffect(() => {
@@ -465,12 +495,33 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
 
       setAiResponse('');
       
+      // Batch chunks to reduce excessive re-renders and prevent call stack overflow
+      let accumulatedText = '';
+      let lastUpdateTime = Date.now();
+      
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          // Add any remaining accumulated text when done
+          if (accumulatedText) {
+            setAiResponse(prev => prev + accumulatedText);
+          }
+          break;
+        }
         
         const chunk = new TextDecoder().decode(value);
-        setAiResponse(prev => prev + chunk);
+        accumulatedText += chunk;
+        
+        // Throttle updates - only update every 100ms to prevent call stack overflow
+        const now = Date.now();
+        if (now - lastUpdateTime > 100) {
+          setAiResponse(prev => prev + accumulatedText);
+          accumulatedText = '';
+          lastUpdateTime = now;
+          
+          // Small delay to prevent overwhelming React's render cycle
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
       }
     } catch (error) {
       console.error('Error getting AI response:', error);
