@@ -420,6 +420,44 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
         console.log(`Successfully inserted ${Object.keys(result.insertedIds).length} documents`);
         allInsertedIds = result.insertedIds;
         totalEntriesCreated = totalDocuments.length;
+
+        // Create upload_sessions record after successful log insertion
+        try {
+          const { connectToDatabase } = await import('@/lib/mongodb');
+          const { db } = await connectToDatabase();
+          const uploadSessionsCollection = db.collection('upload_sessions');
+          
+          const successfulFiles = fileResults.filter(f => f.success);
+          const uploadSessionRecord = {
+            userEmail: userInfo.email,
+            sessionId: uploadSessionId,
+            filesCount: successfulFiles.length,
+            uploadedFiles: successfulFiles.map(f => ({
+              fileName: f.filename,
+              cleanedFilename: f.cleanedFilename,
+              classification: f.classification,
+              entriesCreated: f.entriesCreated || 0,
+              uploadDate: new Date(),
+              active: true
+            })),
+            createdAt: new Date(),
+            updatedAt: new Date()
+          };
+
+          console.log(`Creating upload session record:`, {
+            userEmail: userInfo.email,
+            sessionId: uploadSessionId,
+            filesCount: uploadSessionRecord.filesCount,
+            uploadedFilesCount: uploadSessionRecord.uploadedFiles.length,
+            totalEntriesInSession: uploadSessionRecord.uploadedFiles.reduce((sum, f) => sum + f.entriesCreated, 0)
+          });
+
+          await uploadSessionsCollection.insertOne(uploadSessionRecord);
+          console.log(`✅ Successfully created upload session record for session: ${uploadSessionId}`);
+        } catch (sessionError) {
+          console.error('❌ Failed to create upload session record:', sessionError);
+          // Don't fail the whole upload if session creation fails
+        }
       } catch (mongoError) {
         console.error('MongoDB insertion error:', mongoError);
         throw new Error('Failed to insert documents into MongoDB');

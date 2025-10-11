@@ -5,6 +5,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import LoginPage from '../components/LoginPage';
+import { TimezoneProvider } from '@/context/TimezoneContext';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -64,22 +65,18 @@ export default function RootLayout({
     );
   }
 
-  if (!user) {
-    return (
-      <html lang="en">
-        <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-          <LoginPage onLogin={handleLogin} />
-        </body>
-      </html>
-    );
-  }
-
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <div className="min-h-screen bg-white">
-          {children}
-        </div>
+        <TimezoneProvider>
+          <div className="min-h-screen bg-white">
+            {!user ? (
+              <LoginPage onLogin={handleLogin} />
+            ) : (
+              children
+            )}
+          </div>
+        </TimezoneProvider>
       </body>
     </html>
   );

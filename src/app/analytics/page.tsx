@@ -153,7 +153,7 @@ export default function AnalyticsPage() {
     return (
       <div className="min-h-screen bg-white text-gray-900 p-8">
         <div className="max-w-7xl mx-auto text-center">
-          <h1 className="text-3xl font-bold text-green-600 mb-4">📊 MongoDB Log Analytics</h1>
+          <h1 className="text-3xl font-bold text-green-600 mb-4">MongoDB Health Check Portal</h1>
           <div className="bg-gray-50 rounded-xl p-8 border border-gray-300">
             <div className="text-gray-600 mb-4">
               <svg className="w-16 h-16 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -181,7 +181,7 @@ export default function AnalyticsPage() {
 
   return (
     <div className="min-h-screen bg-white text-gray-900">
-      <Header title="📊 MongoDB Log Analytics" showBackButton={true}>
+      <Header title="MongoDB Health Check Portal" showBackButton={true}>
         {/* File Selector */}
         <div className="mt-4 flex items-center space-x-3">
           <label htmlFor="fileSelector" className="text-sm font-medium text-gray-700">
