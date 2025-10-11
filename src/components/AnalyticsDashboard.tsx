@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { useTimezone } from '@/context/TimezoneContext';
+import { formatTimestampInTimezone } from '@/lib/timezone';
 
 interface AnalyticsData {
   timestampRange: {
@@ -33,8 +35,11 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     console.warn(`⚠️ High render count detected: ${renderCount.current} renders`);
   }
   
+  const { timezone } = useTimezone();
+  
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // Full page loading for initial load
+  const [queryPerformanceLoading, setQueryPerformanceLoading] = useState(false); // Just for query performance
   const [error, setError] = useState<string | null>(null);
   const [selectedQuery, setSelectedQuery] = useState<any | null>(null);
   const [showQueryModal, setShowQueryModal] = useState(false);
@@ -82,6 +87,20 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
   const [maxScrollOffset, setMaxScrollOffset] = useState<number>(0);
   const [viewportWidth, setViewportWidth] = useState<number>(800);
   const [totalWidth, setTotalWidth] = useState<number>(800);
+  
+  // Available dates state
+  const [availableDates, setAvailableDates] = useState<string[]>([]);
+  const [loadingDates, setLoadingDates] = useState<boolean>(false);
+  
+  // AI Feature Toggle - Set to false to disable, true to enable
+  const AI_FEATURE_ENABLED = false;
+  
+  // Quick date select state
+  const [selectedQuickDate, setSelectedQuickDate] = useState<string>('');
+  const [showManualDateFilters, setShowManualDateFilters] = useState<boolean>(true);
+  
+  // Original unfiltered queries for dropdown population
+  const [originalSlowQueries, setOriginalSlowQueries] = useState<any[]>([]);
 
   // Stabilize slowQueries to prevent filtering useEffect from running constantly
   const slowQueries = useMemo(() => {
@@ -90,21 +109,62 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
   }, [analytics]);
 
   useEffect(() => {
-    console.log('🚀 fetchAnalytics useEffect triggered for:', { sourceFile, userEmail });
+    console.log('🚀 Initial load triggered for:', { sourceFile, userEmail });
     
     // Debounce to prevent rapid successive calls
     const timeoutId = setTimeout(() => {
-      fetchAnalytics();
+      console.log('🚀 Initial load: fetching static analytics, query performance, and available dates');
+      fetchStaticAnalytics(); // Fetch static analytics (always latest day)
+      fetchQueryPerformance(); // Fetch initial query performance (default date range)
+      fetchAvailableDates(); // Fetch available dates for dropdown
     }, 100);
     
     return () => clearTimeout(timeoutId);
   }, [sourceFile, userEmail]);
 
-  const fetchAnalytics = async () => {
-    console.log('📡 fetchAnalytics called');
+  // Fetch available dates from logs
+  const fetchAvailableDates = async () => {
+    console.log('📡 fetchAvailableDates called');
     try {
-      console.log('📡 Setting loading to true');
-      setLoading(true);
+      setLoadingDates(true);
+      const response = await fetch(`/api/dates?sourceFile=${encodeURIComponent(sourceFile)}`, {
+        headers: {
+          'x-user-email': userEmail || '',
+        },
+      });
+      const data = await response.json();
+      
+      if (data.success) {
+        console.log('📅 Available dates received:', data.dates);
+        const dates = data.dates || [];
+        setAvailableDates(dates);
+        
+        // Auto-select the latest date (first in the array since they're sorted newest first)
+        if (dates.length > 0 && !selectedQuickDate) {
+          const latestDate = dates[0];
+          console.log('📅 Auto-selecting latest date for query performance:', latestDate);
+          setStartDate(latestDate);
+          setEndDate(latestDate);
+          setSelectedQuickDate(latestDate);
+          setShowManualDateFilters(false);
+          // Clear time filters for full day selection
+          setStartTime('');
+          setEndTime('');
+        }
+      } else {
+        console.error('Failed to fetch available dates:', data.message);
+      }
+    } catch (err) {
+      console.error('Network error while fetching available dates:', err);
+    } finally {
+      setLoadingDates(false);
+    }
+  };
+
+  // Fetch static analytics (connection stats, auth events, etc.) - always latest day
+  const fetchStaticAnalytics = async () => {
+    console.log('📡 fetchStaticAnalytics called (latest day data)');
+    try {
       const response = await fetch(`/api/analytics?sourceFile=${encodeURIComponent(sourceFile)}`, {
         headers: {
           'x-user-email': userEmail || '',
@@ -113,18 +173,14 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
       const data = await response.json();
       
       if (data.success) {
-        console.log('📊 Setting analytics data');
+        console.log('📊 Setting static analytics data');
         setAnalytics(data.analytics);
-        console.log('Analytics data received:', data.analytics);
-        console.log('Slow queries:', data.analytics.slowQueries?.length || 0);
+        console.log('Static analytics received:', data.analytics);
         console.log('Timestamp range:', data.analytics.timestampRange);
         
-        // Don't set filteredQueries here - let the filtering useEffect handle it
-        console.log('📊 Skipping initial filtered queries - letting useEffect handle it');
-        
-        // Set default date range based on overall log file timestamp range
+        // Set default date range from static analytics
         if (data.analytics.timestampRange?.minTimestamp && data.analytics.timestampRange?.maxTimestamp) {
-          console.log('📊 Setting date range');
+          console.log('📊 Setting initial date range from static analytics');
           const minDate = new Date(data.analytics.timestampRange.minTimestamp);
           const maxDate = new Date(data.analytics.timestampRange.maxTimestamp);
           setStartDate(minDate.toISOString().split('T')[0]);
@@ -133,12 +189,117 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
         
         setError(null);
       } else {
-        setError(data.message || 'Failed to fetch analytics');
+        setError(data.message || 'Failed to fetch static analytics');
       }
     } catch (err) {
-      setError('Network error while fetching analytics');
+      setError('Network error while fetching static analytics');
     } finally {
+      // Static analytics loaded - turn off main loading
       setLoading(false);
+    }
+  };
+
+  // Fetch query performance data (responds to date filters)
+  const fetchQueryPerformance = async (filterParams?: {
+    startDate?: string;
+    endDate?: string;
+    startTime?: string;
+    endTime?: string;
+    operationFilter?: string;
+    namespaceFilter?: string;
+    excludeSystemNamespaces?: boolean;
+    inMemorySortsFilter?: boolean;
+    fromMultiPlannerFilter?: boolean;
+  }) => {
+    console.log('📡 fetchQueryPerformance called with filters:', filterParams);
+    try {
+      setQueryPerformanceLoading(true); // Use separate loading state
+      
+      // Build query parameters
+      const params = new URLSearchParams({
+        sourceFile: sourceFile
+      });
+      
+      // Add filter parameters if provided
+      if (filterParams?.startDate) params.set('startDate', filterParams.startDate);
+      if (filterParams?.endDate) params.set('endDate', filterParams.endDate);
+      if (filterParams?.startTime) params.set('startTime', filterParams.startTime);
+      if (filterParams?.endTime) params.set('endTime', filterParams.endTime);
+      if (filterParams?.operationFilter) {
+        params.set('operationFilter', filterParams.operationFilter);
+        console.log('🔍 Sending operationFilter to API:', filterParams.operationFilter);
+      }
+      if (filterParams?.namespaceFilter) params.set('namespaceFilter', filterParams.namespaceFilter);
+      if (filterParams?.excludeSystemNamespaces) params.set('excludeSystemNamespaces', 'true');
+      if (filterParams?.inMemorySortsFilter) params.set('inMemorySortsFilter', 'true');
+      if (filterParams?.fromMultiPlannerFilter) params.set('fromMultiPlannerFilter', 'true');
+      
+      console.log('📡 Query Performance API URL:', `/api/query-performance?${params.toString()}`);
+      
+      const response = await fetch(`/api/query-performance?${params.toString()}`, {
+        headers: {
+          'x-user-email': userEmail || '',
+        },
+      });
+      const data = await response.json();
+      
+      if (data.success) {
+        console.log('📊 Setting query performance data');
+        console.log('Query performance data received:', data.queryPerformance);
+        console.log('Slow queries:', data.queryPerformance.slowQueries?.length || 0);
+        console.log('Filter metadata:', data.metadata?.filterApplied);
+        
+        // Set filtered queries directly from server response
+        if (data.queryPerformance.slowQueries) {
+          console.log('📊 Setting filtered queries from query performance API');
+          setFilteredQueries(data.queryPerformance.slowQueries);
+          
+          // Store original unfiltered queries on first load (no specific filters applied)
+          // Note: We ignore date/time filters for dropdown population to show all possible values
+          const hasSpecificFilters = filterParams?.operationFilter || filterParams?.namespaceFilter || 
+                                    filterParams?.inMemorySortsFilter || filterParams?.fromMultiPlannerFilter || 
+                                    filterParams?.excludeSystemNamespaces;
+          
+          if (!hasSpecificFilters && originalSlowQueries.length === 0) {
+            console.log('📊 Storing original unfiltered queries for dropdown population');
+            setOriginalSlowQueries(data.queryPerformance.slowQueries);
+          }
+          
+          // CRITICAL FIX: Update analytics.slowQueries so Timeline Analysis uses the same filtered data
+          setAnalytics(prev => {
+            if (!prev) {
+              // If no previous analytics, create minimal structure
+              return {
+                timestampRange: { minTimestamp: null, maxTimestamp: null, totalLogs: 0 },
+                connectionStats: [],
+                errorAnalysis: [],
+                slowQueries: data.queryPerformance.slowQueries,
+                slowOperations: [],
+                indexUsage: [],
+                performanceInsights: [],
+                authEvents: [],
+                connectionSources: [],
+                healthEvents: []
+              };
+            }
+            // Update existing analytics
+            return {
+              ...prev,
+              slowQueries: data.queryPerformance.slowQueries
+            };
+          });
+          console.log('📊 Updated analytics.slowQueries for Timeline Analysis with filtered data');
+          console.log('📊 New analytics.slowQueries length:', data.queryPerformance.slowQueries.length);
+        }
+        
+        setError(null);
+      } else {
+        setError(data.message || 'Failed to fetch query performance data');
+      }
+    } catch (err) {
+      setError('Network error while fetching query performance data');
+    } finally {
+      setQueryPerformanceLoading(false); // Use separate loading state
     }
   };
 
@@ -235,94 +396,73 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     return getOperationType(query) || 'unknown';
   };
 
-  // Filter queries when date/time range or time filter changes
+  // Handle date selection from dropdown
+  const handleDateSelection = (selectedDate: string) => {
+    console.log('📅 Date selected from dropdown:', selectedDate);
+    // Set both start and end date to the selected date for a single day filter
+    setStartDate(selectedDate);
+    setEndDate(selectedDate);
+    // Clear time inputs for full day selection
+    setStartTime('');
+    setEndTime('');
+    // Update quick date state and hide manual filters
+    setSelectedQuickDate(selectedDate);
+    setShowManualDateFilters(false);
+  };
+
+  // Handle reset functionality
+  const handleResetFilters = () => {
+    console.log('🔄 Resetting all filters');
+    // Reset date filters
+    setStartDate('');
+    setEndDate('');
+    setStartTime('');
+    setEndTime('');
+    // Reset quick date select
+    setSelectedQuickDate('');
+    setShowManualDateFilters(true);
+    // Reset other filters
+    setOperationFilter('');
+    setNamespaceFilter('');
+    setInMemorySortsFilter(false);
+    setFromMultiPlannerFilter(false);
+    setExcludeSystemNamespaces(false);
+  };
+
+  // Trigger query performance refetch when filter values change (with debouncing)
+  // Static analytics remain unchanged - only query performance graphs update
   useEffect(() => {
-    console.log('🔎 Filtering useEffect triggered, slowQueries count:', slowQueries.length);
-    if (!slowQueries.length) {
-      console.log('🔎 No slowQueries, clearing filteredQueries');
-      setFilteredQueries([]);
+    console.log('🔄 Filter change detected, scheduling Query Performance refetch');
+    
+    // Skip initial load (no dates set yet)
+    if (!startDate || !endDate) {
+      console.log('🔄 No date range set yet, skipping refetch');
       return;
     }
-
-    let filtered = [...slowQueries];
-
-    // Apply operation type filter
-    if (operationFilter) {
-      filtered = filtered.filter((query: any) => {
-        const operationType = getOperationType(query);
-        return operationType === operationFilter;
-      });
-    }
-
-    // Apply namespace filter
-    if (namespaceFilter) {
-      filtered = filtered.filter((query: any) => query.namespace === namespaceFilter);
-    }
-
-    // Apply system namespace exclusion filter
-    if (excludeSystemNamespaces) {
-      filtered = filtered.filter((query: any) => {
-        if (!query.namespace) return true; // Keep queries without namespace
-        const namespace = query.namespace.toString();
-        return !namespace.startsWith('local.') && 
-               !namespace.startsWith('admin.') && 
-               !namespace.startsWith('config.');
-      });
-    }
-
-    // Apply InMemorySorts filter
-    if (inMemorySortsFilter) {
-      filtered = filtered.filter((query: any) => query.hasSortStage === true);
-    }
-
-    // Apply FromMultiPlanner filter
-    if (fromMultiPlannerFilter) {
-      filtered = filtered.filter((query: any) => query.fromMultiPlanner === true);
-    }
-
-    // Apply time filter first (12:00 AM to 12:00 PM means 00:00 to 12:00)
-    if (timeFilter) {
-      const [startHour, endHour] = timeFilter.split('-').map(t => parseInt(t));
-      filtered = filtered.filter((query: any) => {
-        const queryDate = new Date(query.timestamp);
-        const queryHour = queryDate.getHours();
-        if (startHour <= endHour) {
-          return queryHour >= startHour && queryHour < endHour;
-        } else {
-          // Handle overnight ranges (e.g., 22-06)
-          return queryHour >= startHour || queryHour < endHour;
-        }
-      });
-    }
-
-    // Apply date/time filtering
-    if (startDate || endDate || startTime || endTime) {
-      filtered = filtered.filter((query: any) => {
-        const queryDate = new Date(query.timestamp);
-        
-        // Create start datetime
-        let startDateTime = null;
-        if (startDate) {
-          const timeStr = startTime || '00:00:00';
-          startDateTime = new Date(`${startDate}T${timeStr}`);
-        }
-        
-        // Create end datetime
-        let endDateTime = null;
-        if (endDate) {
-          const timeStr = endTime || '23:59:59';
-          endDateTime = new Date(`${endDate}T${timeStr}`);
-        }
-
-        if (startDateTime && queryDate < startDateTime) return false;
-        if (endDateTime && queryDate > endDateTime) return false;
-        return true;
-      });
-    }
-
-    setFilteredQueries(filtered);
-    console.log(`Filtered queries: ${filtered.length} out of ${slowQueries.length}`);
-  }, [slowQueries, startDate, endDate, startTime, endTime, timeFilter, operationFilter, namespaceFilter, inMemorySortsFilter, fromMultiPlannerFilter, excludeSystemNamespaces]);
+    
+    // Debounce API calls to avoid too many requests
+    const timeoutId = setTimeout(() => {
+      console.log('🔄 Executing debounced Query Performance refetch with current filters');
+      console.log('🔄 Static analytics (connection stats, auth events, etc.) remain unchanged');
+      
+      const filterParams = {
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+        startTime: startTime || undefined,
+        endTime: endTime || undefined,
+        operationFilter: operationFilter || undefined,
+        namespaceFilter: namespaceFilter || undefined,
+        excludeSystemNamespaces: excludeSystemNamespaces || undefined,
+        inMemorySortsFilter: inMemorySortsFilter || undefined,
+        fromMultiPlannerFilter: fromMultiPlannerFilter || undefined,
+      };
+      
+      // Only fetch query performance - static analytics stay the same
+      fetchQueryPerformance(filterParams);
+    }, 500); // 500ms debounce
+    
+    return () => clearTimeout(timeoutId);
+  }, [startDate, endDate, startTime, endTime, operationFilter, namespaceFilter, inMemorySortsFilter, fromMultiPlannerFilter, excludeSystemNamespaces]);
 
   // Handle viewport width changes and scrolling boundaries
   useEffect(() => {
@@ -396,6 +536,264 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     }
   }, [filteredQueries.length, viewportWidth, maxScrollOffset]);
 
+  // Function to analyze queries running at a specific timestamp
+  const analyzeQueriesAtTimestamp = useCallback((timestamp: string) => {
+    console.log('🔍 Analyzing queries at timestamp:', timestamp);
+    if (!analytics?.slowQueries || !timestamp) {
+      console.log('❌ No analytics data or timestamp provided', {
+        hasAnalytics: !!analytics,
+        hasSlowQueries: !!analytics?.slowQueries,
+        slowQueriesLength: analytics?.slowQueries?.length || 0,
+        timestamp: timestamp
+      });
+      setTimelineQueries([]);
+      setShowTimelineAnalysis(false);
+      return;
+    }
+
+    const targetTime = new Date(timestamp).getTime();
+    console.log('🎯 Target time:', targetTime, 'from timestamp:', timestamp);
+    console.log('📊 Total slow queries available for timeline analysis:', analytics.slowQueries.length);
+    console.log('📊 Data source: analytics.slowQueries (updated by query performance API)');
+    
+    // Note: filteredQueries comparison removed to avoid variable hoisting issues
+    
+    // Debug: Check sample query structure and timestamp formats
+    if (analytics.slowQueries.length > 0) {
+      const sampleQuery = analytics.slowQueries[0];
+      console.log('📋 Sample query structure:', {
+        hasQueryStartTime: !!sampleQuery.queryStartTime,
+        hasQueryEndTime: !!sampleQuery.queryEndTime,
+        hasLogTimestamp: !!sampleQuery.logTimestamp,
+        queryStartTimeType: typeof sampleQuery.queryStartTime,
+        queryEndTimeType: typeof sampleQuery.queryEndTime,
+        logTimestampType: typeof sampleQuery.logTimestamp,
+        queryStartTimeValue: sampleQuery.queryStartTime,
+        queryEndTimeValue: sampleQuery.queryEndTime,
+        logTimestampValue: sampleQuery.logTimestamp,
+        durationMillis: sampleQuery.durationMillis,
+        duration: sampleQuery.duration,
+        namespace: sampleQuery.namespace
+      });
+
+      // Parse timestamps to see if there are conversion issues
+      if (sampleQuery.queryStartTime) {
+        let parsedStartTime;
+        if (typeof sampleQuery.queryStartTime === 'number') {
+          parsedStartTime = sampleQuery.queryStartTime * 1000; // Assuming seconds, converting to ms
+        } else if (sampleQuery.queryStartTime.$date) {
+          parsedStartTime = new Date(sampleQuery.queryStartTime.$date).getTime();
+        } else {
+          parsedStartTime = new Date(sampleQuery.queryStartTime).getTime();
+        }
+        console.log('🕰️ Parsed queryStartTime:', parsedStartTime, 'as ISO:', new Date(parsedStartTime).toISOString());
+      }
+
+      if (sampleQuery.queryEndTime) {
+        let parsedEndTime;
+        if (typeof sampleQuery.queryEndTime === 'number') {
+          parsedEndTime = sampleQuery.queryEndTime * 1000;
+        } else if (sampleQuery.queryEndTime.$date) {
+          parsedEndTime = new Date(sampleQuery.queryEndTime.$date).getTime();
+        } else {
+          parsedEndTime = new Date(sampleQuery.queryEndTime).getTime();
+        }
+        console.log('🕰️ Parsed queryEndTime:', parsedEndTime, 'as ISO:', new Date(parsedEndTime).toISOString());
+      }
+    }
+    
+    const runningQueries = analytics.slowQueries.filter((query: any, index: number) => {
+      // Show debug info for first few queries
+      const isDebugQuery = index < 3;
+      
+      if (isDebugQuery) {
+        console.log(`🔍 Processing query ${index + 1}:`, {
+          namespace: query.namespace,
+          hasQueryStartTime: !!query.queryStartTime,
+          hasQueryEndTime: !!query.queryEndTime,
+          hasLogTimestamp: !!query.logTimestamp,
+          queryStartTimeRaw: query.queryStartTime,
+          queryEndTimeRaw: query.queryEndTime,
+          logTimestampRaw: query.logTimestamp,
+          duration: query.durationMillis || query.duration
+        });
+      }
+
+      // Check if query has both start and end times
+      if (!query.queryStartTime || !query.queryEndTime) {
+        // Try alternative timestamp fields if primary ones don't exist
+        if (!query.logTimestamp) {
+          if (isDebugQuery) console.log(`❌ Query ${index + 1}: No usable timestamp data`);
+          return false;
+        }
+        // If we only have logTimestamp, assume the query was running at that time
+        // This is a fallback for queries that don't have explicit start/end times
+      }
+      
+      // Filter out system databases (local, admin, config)
+      if (query.namespace) {
+        const dbName = query.namespace.split('.')[0];
+        if (['local', 'admin', 'config'].includes(dbName)) {
+          if (isDebugQuery) console.log(`❌ Query ${index + 1}: Filtered out system database: ${dbName}`);
+          return false;
+        }
+      }
+      
+      let startTime: number;
+      let endTime: number;
+      
+      try {
+        // Handle case where we have explicit start/end times
+        if (query.queryStartTime && query.queryEndTime) {
+          // Handle different timestamp formats for start time
+          if (typeof query.queryStartTime === 'number') {
+            // CRITICAL FIX: Don't multiply by 1000 if already in milliseconds
+            startTime = query.queryStartTime > 1e12 ? query.queryStartTime : query.queryStartTime * 1000;
+          } else if (query.queryStartTime.$date) {
+            startTime = new Date(query.queryStartTime.$date).getTime();
+          } else {
+            startTime = new Date(query.queryStartTime).getTime();
+          }
+          
+          // Handle different timestamp formats for end time
+          if (typeof query.queryEndTime === 'number') {
+            // CRITICAL FIX: Don't multiply by 1000 if already in milliseconds
+            endTime = query.queryEndTime > 1e12 ? query.queryEndTime : query.queryEndTime * 1000;
+          } else if (query.queryEndTime.$date) {
+            endTime = new Date(query.queryEndTime.$date).getTime();
+          } else {
+            endTime = new Date(query.queryEndTime).getTime();
+          }
+        } else if (query.logTimestamp) {
+          // Fallback: use logTimestamp and estimate duration
+          let logTime: number;
+          if (typeof query.logTimestamp === 'number') {
+            // CRITICAL FIX: Don't multiply by 1000 if already in milliseconds
+            logTime = query.logTimestamp > 1e12 ? query.logTimestamp : query.logTimestamp * 1000;
+          } else if (query.logTimestamp.$date) {
+            logTime = new Date(query.logTimestamp.$date).getTime();
+          } else {
+            logTime = new Date(query.logTimestamp).getTime();
+          }
+          
+          // Estimate start time based on duration (if available) or use a default window
+          const duration = query.durationMillis || query.duration || 100; // Default 100ms if no duration
+          startTime = logTime - duration;
+          endTime = logTime;
+        } else {
+          if (isDebugQuery) console.log(`❌ Query ${index + 1}: No usable timestamp data after parsing`);
+          return false; // No usable timestamp data
+        }
+
+        if (isDebugQuery) {
+          console.log(`🕰️ Query ${index + 1} parsed timestamps:`, {
+            startTimeMs: startTime,
+            endTimeMs: endTime,
+            startTimeISO: new Date(startTime).toISOString(),
+            endTimeISO: new Date(endTime).toISOString(),
+            targetTimeMs: targetTime,
+            targetTimeISO: new Date(targetTime).toISOString(),
+            queryDuration: endTime - startTime,
+            targetInRange: `${targetTime} >= ${startTime} && ${targetTime} <= ${endTime}`,
+            willMatch: targetTime >= startTime && targetTime <= endTime
+          });
+        }
+        
+        // Check if target timestamp falls within query execution period
+        const isRunning = targetTime >= startTime && targetTime <= endTime;
+        
+        if (isRunning) {
+          console.log('✅ Query was running:', {
+            namespace: query.namespace,
+            startTime: new Date(startTime).toISOString(),
+            endTime: new Date(endTime).toISOString(),
+            targetTime: new Date(targetTime).toISOString(),
+            duration: query.durationMillis || query.duration,
+            queryIndex: index + 1
+          });
+        }
+        
+        return isRunning;
+      } catch (e) {
+        console.warn('Error parsing timestamps for query:', query, e);
+        return false;
+      }
+    });
+
+    // Apply operation type filter if selected
+    let filteredQueries = runningQueries;
+    if (timelineOperationFilter) {
+      filteredQueries = runningQueries.filter((query: any) => {
+        const operationType = getTimelineOperationType(query);
+        return operationType === timelineOperationFilter;
+      });
+    }
+
+    // Apply Timeline InMemorySorts filter if selected
+    if (timelineInMemorySortsFilter) {
+      filteredQueries = filteredQueries.filter((query: any) => query.hasSortStage === true);
+    }
+
+    // Apply Timeline FromMultiPlanner filter if selected
+    if (timelineFromMultiPlannerFilter) {
+      filteredQueries = filteredQueries.filter((query: any) => query.fromMultiPlanner === true);
+    }
+
+    // Apply Timeline Exclude Errored Queries filter if selected
+    if (timelineExcludeErroredFilter) {
+      filteredQueries = filteredQueries.filter((query: any) => {
+        // Exclude queries that have error codes (ErroredOut queries)
+        return !(query.errCode && query.errCode !== null && query.errCode !== '');
+      });
+    }
+
+    // Apply system namespace exclusion filter to timeline as well
+    if (excludeSystemNamespaces) {
+      filteredQueries = filteredQueries.filter((query: any) => {
+        if (!query.namespace) return true; // Keep queries without namespace
+        const namespace = query.namespace.toString();
+        return !namespace.startsWith('local.') && 
+               !namespace.startsWith('admin.') && 
+               !namespace.startsWith('config.');
+      });
+    }
+
+    // Sort by selected metric (highest first) and add timeline position info
+    const sortedQueries = filteredQueries
+      .sort((a, b) => getTimelineSortValue(b) - getTimelineSortValue(a))
+      .map((query, index) => ({
+        ...query,
+        timelineIndex: index
+      }));
+
+    console.log('✅ Timeline Analysis Results:', {
+      totalSlowQueries: analytics.slowQueries.length,
+      queriesRunningAtTime: runningQueries.length,
+      afterFiltering: filteredQueries.length,
+      finalSortedQueries: sortedQueries.length,
+      timestamp: timestamp,
+      filters: {
+        operation: timelineOperationFilter,
+        inMemorySorts: timelineInMemorySortsFilter,
+        fromMultiPlanner: timelineFromMultiPlannerFilter,
+        excludeErrored: timelineExcludeErroredFilter,
+        excludeSystemNamespaces: excludeSystemNamespaces
+      }
+    });
+    
+    setTimelineQueries(sortedQueries);
+    setShowTimelineAnalysis(true);
+  }, [analytics?.slowQueries, timelineOperationFilter, timelineInMemorySortsFilter, timelineFromMultiPlannerFilter, timelineExcludeErroredFilter, excludeSystemNamespaces, timelineSortMetric]);
+
+  // Auto-analyze when timestamp changes
+  useEffect(() => {
+    if (selectedTimestamp && analytics?.slowQueries) {
+      console.log('🔄 Auto-analyzing timeline due to timestamp change:', selectedTimestamp);
+      analyzeQueriesAtTimestamp(selectedTimestamp);
+    }
+  }, [selectedTimestamp, analyzeQueriesAtTimestamp]);
+
+
   if (loading) {
     return (
       <div className="bg-white rounded-xl p-6 border border-gray-300">
@@ -412,16 +810,15 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
 
   if (error || !analytics) {
     return (
-      <div className="bg-white rounded-xl p-6 border border-red-300">
-        <h3 className="text-red-600 font-semibold mb-2">Analytics Error</h3>
+      <div className="bg-white rounded-xl p-6 border border-green-300">
+        <h3 className="text-green-600 font-semibold mb-2">Analytics Error</h3>
         <p className="text-gray-700">{error}</p>
       </div>
     );
   }
 
   const formatTimestamp = (timestamp: string) => {
-    return new Date(timestamp).toLocaleString('en-IN', {
-      timeZone: 'Asia/Kolkata',
+    return formatTimestampInTimezone(timestamp, timezone, {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -436,8 +833,8 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     try {
       let date: Date;
       if (typeof timestamp === 'number') {
-        // If it's a Unix timestamp
-        date = new Date(timestamp * 1000);
+        // If it's a Unix timestamp (check if it's in seconds or milliseconds)
+        date = new Date(timestamp > 1e12 ? timestamp : timestamp * 1000);
       } else if (timestamp.$date) {
         // MongoDB date format
         date = new Date(timestamp.$date);
@@ -447,8 +844,8 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
         return JSON.stringify(timestamp);
       }
       
-      return date.toLocaleString('en-IN', {
-        timeZone: 'Asia/Kolkata',
+      // Use timezone-aware formatting
+      return formatTimestampInTimezone(date, timezone, {
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
@@ -540,9 +937,9 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
-      case 'E': return 'text-red-600';
-      case 'F': return 'text-red-700';
-      case 'W': return 'text-yellow-600';
+      case 'E': return 'text-green-600';
+      case 'F': return 'text-green-700';
+      case 'W': return 'text-green-600';
       case 'I': return 'text-green-600';
       default: return 'text-gray-600';
     }
@@ -618,111 +1015,45 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     }
   };
 
-  // Function to analyze queries running at a specific timestamp
-  const analyzeQueriesAtTimestamp = (timestamp: string) => {
-    if (!analytics?.slowQueries || !timestamp) {
-      setTimelineQueries([]);
-      return;
-    }
 
-    const targetTime = new Date(timestamp).getTime();
-    
-    const runningQueries = analytics.slowQueries.filter((query: any) => {
-      // Check if query has both start and end times
-      if (!query.queryStartTime || !query.queryEndTime) return false;
-      
-      // Filter out system databases (local, admin, config)
-      if (query.namespace) {
-        const dbName = query.namespace.split('.')[0];
-        if (['local', 'admin', 'config'].includes(dbName)) {
-          return false;
-        }
-      }
-      
-      let startTime: number;
-      let endTime: number;
-      
-      try {
-        // Handle different timestamp formats
-        if (typeof query.queryStartTime === 'number') {
-          startTime = query.queryStartTime * 1000; // Convert to milliseconds if it's Unix timestamp
-        } else if (query.queryStartTime.$date) {
-          startTime = new Date(query.queryStartTime.$date).getTime();
-        } else {
-          startTime = new Date(query.queryStartTime).getTime();
-        }
-        
-        if (typeof query.queryEndTime === 'number') {
-          endTime = query.queryEndTime * 1000;
-        } else if (query.queryEndTime.$date) {
-          endTime = new Date(query.queryEndTime.$date).getTime();
-        } else {
-          endTime = new Date(query.queryEndTime).getTime();
-        }
-        
-        // Check if target timestamp falls within query execution period
-        return targetTime >= startTime && targetTime <= endTime;
-      } catch (e) {
-        console.warn('Error parsing timestamps for query:', query);
-        return false;
-      }
-    });
-
-    // Apply operation type filter if selected
-    let filteredQueries = runningQueries;
-    if (timelineOperationFilter) {
-      filteredQueries = runningQueries.filter((query: any) => {
-        const operationType = getTimelineOperationType(query);
-        return operationType === timelineOperationFilter;
-      });
-    }
-
-    // Apply Timeline InMemorySorts filter if selected
-    if (timelineInMemorySortsFilter) {
-      filteredQueries = filteredQueries.filter((query: any) => query.hasSortStage === true);
-    }
-
-    // Apply Timeline FromMultiPlanner filter if selected
-    if (timelineFromMultiPlannerFilter) {
-      filteredQueries = filteredQueries.filter((query: any) => query.fromMultiPlanner === true);
-    }
-
-    // Apply Timeline Exclude Errored Queries filter if selected
-    if (timelineExcludeErroredFilter) {
-      filteredQueries = filteredQueries.filter((query: any) => {
-        // Exclude queries that have error codes (ErroredOut queries)
-        return !(query.errCode && query.errCode !== null && query.errCode !== '');
-      });
-    }
-
-    // Apply system namespace exclusion filter to timeline as well
-    if (excludeSystemNamespaces) {
-      filteredQueries = filteredQueries.filter((query: any) => {
-        if (!query.namespace) return true; // Keep queries without namespace
-        const namespace = query.namespace.toString();
-        return !namespace.startsWith('local.') && 
-               !namespace.startsWith('admin.') && 
-               !namespace.startsWith('config.');
-      });
-    }
-
-    // Sort by selected metric (highest first) and add timeline position info
-    const sortedQueries = filteredQueries
-      .sort((a, b) => getTimelineSortValue(b) - getTimelineSortValue(a))
-      .map((query, index) => ({
-        ...query,
-        timelineIndex: index
-      }));
-
-    setTimelineQueries(sortedQueries);
-    setShowTimelineAnalysis(true);
-  };
+  // Debug information (only show in development)
+  console.log('🔍 AnalyticsDashboard Debug Info:', {
+    hasAnalytics: !!analytics,
+    slowQueriesCount: analytics?.slowQueries?.length || 0,
+    selectedTimestamp,
+    timelineQueriesCount: timelineQueries.length,
+    operationFilterValue: operationFilter,
+    namespaceFilterValue: namespaceFilter,
+    loading,
+    queryPerformanceLoading
+  });
+  
+  if (analytics?.slowQueries?.length > 0) {
+    console.log('🔍 First slow query sample:', analytics.slowQueries[0]);
+  }
 
   return (
     <div className="w-full space-y-4 lg:space-y-6 text-left">
+      {/* Debug Info Panel */}
+      {process.env.NODE_ENV === 'development' && analytics && (
+        <div className="bg-green-50 border border-green-300 rounded-lg p-4 text-sm">
+          <h4 className="font-semibold text-green-800 mb-2">🔍 Debug Information</h4>
+          <div className="text-green-700 space-y-1">
+            <div>Analytics loaded: {analytics ? 'Yes' : 'No'}</div>
+            <div>Slow queries count: {analytics?.slowQueries?.length || 0}</div>
+            <div>Selected timestamp: {selectedTimestamp || 'None'}</div>
+            <div>Timeline queries: {timelineQueries.length}</div>
+            <div>Operation filter: {operationFilter || 'All'}</div>
+            <div>Namespace filter: {namespaceFilter || 'All'}</div>
+            <div>Loading: {loading ? 'Yes' : 'No'}</div>
+            <div>Query performance loading: {queryPerformanceLoading ? 'Yes' : 'No'}</div>
+          </div>
+        </div>
+      )}
+
       {/* Connection Analytics Widget */}
       <div className="bg-white rounded-xl p-4 lg:p-6 border border-gray-300">
-        <h3 className="text-lg lg:text-xl font-semibold text-blue-600 mb-4">🌐 Application Connections</h3>
+        <h3 className="text-lg lg:text-xl font-semibold text-green-600 mb-4">🌐 Application Connections</h3>
         <div className="space-y-3 max-h-64 overflow-y-auto">
           {analytics.connectionStats.length > 0 ? (
             analytics.connectionStats.map((conn, index) => (
@@ -733,10 +1064,10 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                       <span className="text-green-400 font-semibold text-sm">
                         {conn.appName || 'Unknown App'}
                       </span>
-                      <span className="text-blue-600 text-xs px-2 py-1 bg-blue-100 rounded">
+                      <span className="text-green-600 text-xs px-2 py-1 bg-green-100 rounded">
                         {conn.totalConnections} connections
                       </span>
-                      <span className="text-purple-400 text-xs px-2 py-1 bg-purple-900 rounded">
+                      <span className="text-green-400 text-xs px-2 py-1 bg-green-700 rounded">
                         {conn.totalUniqueIPs} unique IPs
                       </span>
                     </div>
@@ -757,7 +1088,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                             <span className={`text-xs px-2 py-1 rounded font-medium ${
                               conn.compatibility.isCompatible 
                                 ? 'bg-green-100 text-green-800' 
-                                : 'bg-red-100 text-red-800'
+                                : 'bg-green-100 text-green-800'
                             }`}>
                               {conn.compatibility.isCompatible ? '✅ Compatible' : '❌ Not Compatible'}
                             </span>
@@ -772,12 +1103,12 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                                   <span className={`px-1 py-0.5 rounded ${
                                     result.isCompatible 
                                       ? 'bg-green-100 text-green-800' 
-                                      : 'bg-red-100 text-red-800'
+                                      : 'bg-green-100 text-green-800'
                                   }`}>
                                     {result.isCompatible ? '✅' : '❌'}
                                   </span>
                                   {!result.isCompatible && (
-                                    <span className="text-yellow-400 text-xs">
+                                    <span className="text-green-400 text-xs">
                                       {result.notes?.includes('does not support') 
                                         ? 'Unsupported MongoDB version' 
                                         : result.recommendedVersions ? `Rec: ${result.recommendedVersions.slice(0, 2).join(', ')}` : 'Incompatible'
@@ -791,7 +1122,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                           
                           {/* Overall recommendations */}
                           {!conn.compatibility.isCompatible && conn.compatibility.recommendedVersions && conn.compatibility.recommendedVersions.length > 0 && (
-                            <div className="text-xs text-yellow-400">
+                            <div className="text-xs text-green-400">
                               <strong>Recommendations:</strong> {conn.compatibility.recommendedVersions.slice(0, 3).join(', ')}
                             </div>
                           )}
@@ -826,14 +1157,14 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                           <div className="text-gray-600 text-xs">
                             <span>No IP addresses recorded</span>
                             {/* Debug info */}
-                            <div className="text-yellow-400 text-xs mt-1">
+                            <div className="text-green-400 text-xs mt-1">
                               Debug: remoteIPs = {JSON.stringify(conn.remoteIPs)} | 
                               allRemoteIPs = {JSON.stringify(conn.allRemoteIPs)}
                             </div>
                           </div>
                         )}
                         {conn.totalUniqueIPs > 10 && (
-                          <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
+                          <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
                             +{conn.totalUniqueIPs - 10} more
                           </span>
                         )}
@@ -857,7 +1188,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                 <div className="flex justify-between items-start">
                   <span className="text-gray-700 text-sm font-mono">{typeof source._id === 'object' ? JSON.stringify(source._id) : source._id}</span>
                   <div className="text-right text-xs">
-                    <div className="text-blue-600">{source.connections} events</div>
+                    <div className="text-green-600">{source.connections} events</div>
                     <div className="text-green-400">{source.uniqueConnectionCount} unique</div>
                   </div>
                 </div>
@@ -869,11 +1200,18 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
 
       {/* Performance Insights Widget */}
       <div className="bg-white rounded-xl p-4 lg:p-6 border border-gray-300">
-        <h3 className="text-lg lg:text-xl font-semibold text-yellow-600 mb-4">⚡ Performance Insights</h3>
+        <h3 className="text-lg lg:text-xl font-semibold text-green-600 mb-4">⚡ Performance Insights</h3>
         
         {/* Slow Running Queries Scatter Plot */}
-        <div className="mb-6 border border-yellow-300 rounded-lg p-1">
-          <h4 className="text-yellow-700 font-semibold mb-3 bg-yellow-100 p-2 rounded">🔍 Query Performance Analysis</h4>
+        <div className="mb-6 border border-green-300 rounded-lg p-1">
+          <h4 className="text-green-700 font-semibold mb-3 bg-green-100 p-2 rounded">
+            🔍 Query Performance Analysis
+            {queryPerformanceLoading && (
+              <span className="ml-2 text-sm text-gray-600 animate-pulse">
+                🔄 Updating with new filters...
+              </span>
+            )}
+          </h4>
           
           {/* Controls Section */}
           <div className="mb-4 bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-3">
@@ -898,41 +1236,6 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                 </select>
               </div>
               
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                <label htmlFor="timeFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">Time Filter:</label>
-                <select
-                  id="timeFilter"
-                  value={timeFilter}
-                  onChange={(e) => setTimeFilter(e.target.value)}
-                  className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-auto min-w-0"
-                >
-                  <option value="">All Day</option>
-                  <option value="0-1">12:00 AM - 1:00 AM</option>
-                  <option value="1-2">1:00 AM - 2:00 AM</option>
-                  <option value="2-3">2:00 AM - 3:00 AM</option>
-                  <option value="3-4">3:00 AM - 4:00 AM</option>
-                  <option value="4-5">4:00 AM - 5:00 AM</option>
-                  <option value="5-6">5:00 AM - 6:00 AM</option>
-                  <option value="6-7">6:00 AM - 7:00 AM</option>
-                  <option value="7-8">7:00 AM - 8:00 AM</option>
-                  <option value="8-9">8:00 AM - 9:00 AM</option>
-                  <option value="9-10">9:00 AM - 10:00 AM</option>
-                  <option value="10-11">10:00 AM - 11:00 AM</option>
-                  <option value="11-12">11:00 AM - 12:00 PM</option>
-                  <option value="12-13">12:00 PM - 1:00 PM</option>
-                  <option value="13-14">1:00 PM - 2:00 PM</option>
-                  <option value="14-15">2:00 PM - 3:00 PM</option>
-                  <option value="15-16">3:00 PM - 4:00 PM</option>
-                  <option value="16-17">4:00 PM - 5:00 PM</option>
-                  <option value="17-18">5:00 PM - 6:00 PM</option>
-                  <option value="18-19">6:00 PM - 7:00 PM</option>
-                  <option value="19-20">7:00 PM - 8:00 PM</option>
-                  <option value="20-21">8:00 PM - 9:00 PM</option>
-                  <option value="21-22">9:00 PM - 10:00 PM</option>
-                  <option value="22-23">10:00 PM - 11:00 PM</option>
-                  <option value="23-24">11:00 PM - 12:00 AM</option>
-                </select>
-              </div>
             </div>
 
             {/* Operation Type and Namespace Filters */}
@@ -946,11 +1249,41 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                   className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-auto min-w-0"
                 >
                   <option value="">All Operations</option>
-                  {analytics?.slowQueries && Array.from(new Set(
-                    analytics.slowQueries.map((query: any) => getOperationType(query)).filter((op): op is string => Boolean(op))
-                  )).sort().map((op: string) => (
-                    <option key={op} value={op}>{op}</option>
-                  ))}
+                  {(() => {
+                    // Use originalSlowQueries for dropdown population to maintain all options
+                    const useOriginal = originalSlowQueries.length > 0;
+                    const dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
+                    
+                    if (!dataSource || dataSource.length === 0) {
+                      console.log('🔍 No data available for Operation dropdown');
+                      return null;
+                    }
+                    
+                    console.log(`🔍 Operation dropdown using ${useOriginal ? 'original unfiltered' : 'current analytics'} data (${dataSource.length} queries)`);
+                    
+                    const operations = Array.from(new Set(
+                      dataSource.map((query: any) => {
+                        const op = getOperationType(query);
+                        // Reduced logging to avoid spam - only log if no operation found
+                        if (!op) {
+                          console.log('🔍 Query with no operation extracted:', { 
+                            hasOperation: !!query.operation,
+                            hasCommand: !!query.command,
+                            operation: query.operation,
+                            command: query.command,
+                            extractedOp: op 
+                          });
+                        }
+                        return op;
+                      }).filter((op): op is string => Boolean(op))
+                    )).sort();
+                    
+                    console.log('🔍 Unique operations found for dropdown:', operations);
+                    
+                    return operations.map((op: string) => (
+                      <option key={op} value={op}>{op}</option>
+                    ));
+                  })()}
                 </select>
               </div>
               
@@ -963,11 +1296,31 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                   className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-auto min-w-0"
                 >
                   <option value="">All Namespaces</option>
-                  {analytics?.slowQueries && Array.from(new Set(
-                    analytics.slowQueries.map((query: any) => query.namespace).filter(Boolean)
-                  )).sort().map((ns) => (
-                    <option key={ns} value={ns}>{ns}</option>
-                  ))}
+                  {(() => {
+                    // Use originalSlowQueries for dropdown population to maintain all options
+                    const useOriginal = originalSlowQueries.length > 0;
+                    const dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
+                    
+                    if (!dataSource || dataSource.length === 0) {
+                      console.log('🔍 No data available for Namespace dropdown');
+                      return null;
+                    }
+                    
+                    console.log(`🔍 Namespace dropdown using ${useOriginal ? 'original unfiltered' : 'current analytics'} data (${dataSource.length} queries)`);
+                    
+                    const namespaces = Array.from(new Set(
+                      dataSource.map((query: any) => {
+                        // Reduced logging to avoid spam
+                        return query.namespace;
+                      }).filter(Boolean)
+                    )).sort();
+                    
+                    console.log('🔍 Unique namespaces found for dropdown:', namespaces);
+                    
+                    return namespaces.map((ns) => (
+                      <option key={ns} value={ns}>{ns}</option>
+                    ));
+                  })()}
                 </select>
               </div>
               
@@ -977,7 +1330,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                     type="checkbox"
                     checked={inMemorySortsFilter}
                     onChange={(e) => setInMemorySortsFilter(e.target.checked)}
-                    className="w-4 h-4 text-yellow-600 bg-white border-gray-200 rounded focus:ring-yellow-500 focus:ring-2"
+                    className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2"
                   />
                   <span>InMemorySorts</span>
                 </label>
@@ -989,7 +1342,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                     type="checkbox"
                     checked={fromMultiPlannerFilter}
                     onChange={(e) => setFromMultiPlannerFilter(e.target.checked)}
-                    className="w-4 h-4 text-yellow-600 bg-white border-gray-200 rounded focus:ring-yellow-500 focus:ring-2"
+                    className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2"
                   />
                   <span>FromMultiPlanner</span>
                 </label>
@@ -1001,54 +1354,161 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                     type="checkbox"
                     checked={excludeSystemNamespaces}
                     onChange={(e) => setExcludeSystemNamespaces(e.target.checked)}
-                    className="w-4 h-4 text-yellow-600 bg-white border-gray-200 rounded focus:ring-yellow-500 focus:ring-2"
+                    className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2"
                   />
                   <span>Exclude System Namespaces</span>
                 </label>
               </div>
             </div>
             
-            {/* Date Filter Controls */}
-            <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-3 mb-3">
+            {/* Date Dropdown Filter */}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-3 p-3 bg-green-50 border border-green-200 rounded-lg">
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                <label htmlFor="startDate" className="text-sm text-gray-700 whitespace-nowrap">From:</label>
-                <div className="flex gap-2">
-                  <input
-                    id="startDate"
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-auto"
-                  />
-                  <input
-                    type="time"
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                    className="bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-auto"
-                    step="1"
-                  />
-                </div>
-              </div>
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                <label htmlFor="endDate" className="text-sm text-gray-700 whitespace-nowrap">To:</label>
-                <div className="flex gap-2">
-                  <input
-                    id="endDate"
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-auto"
-                  />
-                  <input
-                    type="time"
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                    className="bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-auto"
-                    step="1"
-                  />
-                </div>
+                <label htmlFor="dateDropdown" className="text-sm font-medium text-green-700 whitespace-nowrap">Quick Date Select:</label>
+                <select
+                  id="dateDropdown"
+                  value={selectedQuickDate}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleDateSelection(e.target.value);
+                    }
+                  }}
+                  className="bg-white border border-green-300 rounded-lg px-4 py-2 text-sm text-green-800 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 w-full sm:w-auto min-w-[200px] shadow-sm"
+                  disabled={loadingDates}
+                >
+                  <option value="">
+                    {loadingDates ? 'Loading dates...' : 'Select a date'}
+                  </option>
+                  {availableDates.map((date, index) => (
+                    <option key={index} value={date}>
+                      {formatTimestampInTimezone(date, timezone, {
+                        weekday: 'short',
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric'
+                      })} ({date})
+                    </option>
+                  ))}
+                </select>
+                {availableDates.length > 0 && (
+                  <span className="text-xs text-green-600">
+                    {availableDates.length} days available
+                  </span>
+                )}
+                
+                {/* Reset Button - show when quick date is selected */}
+                {selectedQuickDate && (
+                  <button
+                    onClick={handleResetFilters}
+                    className="ml-3 px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Reset Filters
+                  </button>
+                )}
               </div>
             </div>
+
+            {/* Manual Date Filter Controls - Only show when not using quick date select */}
+            {showManualDateFilters && (
+              <div className="bg-gradient-to-r from-gray-50 to-gray-100 rounded-xl p-4 mb-3 border border-gray-200 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                    <label htmlFor="startDate" className="text-sm font-medium text-gray-700 whitespace-nowrap flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                      From:
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        id="startDate"
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => {
+                          setStartDate(e.target.value);
+                          // Reset quick date when manual date is changed
+                          if (selectedQuickDate) {
+                            setSelectedQuickDate('');
+                          }
+                        }}
+                        className="bg-white border border-gray-300 rounded-lg px-4 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm w-full sm:w-auto"
+                      />
+                      <input
+                        type="time"
+                        value={startTime}
+                        onChange={(e) => {
+                          setStartTime(e.target.value);
+                          // Reset quick date when manual time is changed
+                          if (selectedQuickDate) {
+                            setSelectedQuickDate('');
+                          }
+                        }}
+                        className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm w-full sm:w-auto"
+                        step="1"
+                      />
+                    </div>
+                  </div>
+                  
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                    <label htmlFor="endDate" className="text-sm font-medium text-gray-700 whitespace-nowrap flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                      To:
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        id="endDate"
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => {
+                          setEndDate(e.target.value);
+                          // Reset quick date when manual date is changed
+                          if (selectedQuickDate) {
+                            setSelectedQuickDate('');
+                          }
+                        }}
+                        className="bg-white border border-gray-300 rounded-lg px-4 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm w-full sm:w-auto"
+                      />
+                      <input
+                        type="time"
+                        value={endTime}
+                        onChange={(e) => {
+                          setEndTime(e.target.value);
+                          // Reset quick date when manual time is changed
+                          if (selectedQuickDate) {
+                            setSelectedQuickDate('');
+                          }
+                        }}
+                        className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm w-full sm:w-auto"
+                        step="1"
+                      />
+                    </div>
+                  </div>
+                  
+                  {/* Clear Manual Filters Button */}
+                  {(startDate || endDate || startTime || endTime) && (
+                    <button
+                      onClick={() => {
+                        setStartDate('');
+                        setEndDate('');
+                        setStartTime('');
+                        setEndTime('');
+                      }}
+                      className="px-3 py-2 bg-green-100 hover:bg-green-200 text-green-700 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                      Clear Date & Time
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
             
             <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-3">
               <div className="flex flex-wrap gap-2">
@@ -1059,7 +1519,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                     setStartTime('');
                     setEndTime('');
                   }}
-                  className="bg-yellow-600 hover:bg-yellow-700 text-black px-3 py-1 rounded text-sm font-medium transition-colors"
+                  className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm font-medium transition-colors"
                 >
                   Clear Date Filters
                 </button>
@@ -1077,8 +1537,8 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                 {analytics.timestampRange && (
                   <div className="text-xs text-gray-600 break-words">
                     Log range: {analytics.timestampRange.totalLogs} entries from {' '}
-                    {analytics.timestampRange.minTimestamp ? new Date(analytics.timestampRange.minTimestamp).toLocaleDateString() : 'N/A'} to {' '}
-                    {analytics.timestampRange.maxTimestamp ? new Date(analytics.timestampRange.maxTimestamp).toLocaleDateString() : 'N/A'}
+                    {analytics.timestampRange.minTimestamp ? formatTimestampInTimezone(analytics.timestampRange.minTimestamp, timezone, { year: 'numeric', month: 'short', day: 'numeric' }) : 'N/A'} to {' '}
+                    {analytics.timestampRange.maxTimestamp ? formatTimestampInTimezone(analytics.timestampRange.maxTimestamp, timezone, { year: 'numeric', month: 'short', day: 'numeric' }) : 'N/A'}
                   </div>
                 )}
               </div>
@@ -1242,7 +1702,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                                       fontSize="9"
                                       transform={`rotate(-45, ${x}, 360)`}
                                     >
-                                      {date.toLocaleTimeString('en-US', { 
+                                      {formatTimestampInTimezone(date, timezone, { 
                                         hour: '2-digit', 
                                         minute: '2-digit',
                                         hour12: false 
@@ -1411,12 +1871,12 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                       transform: 'translateY(-100%)'
                     }}
                   >
-                    <div className="text-sm font-medium text-yellow-400 mb-1">
+                    <div className="text-sm font-medium text-green-400 mb-1">
                       {hoveredQuery.operationType.toUpperCase()} Operation
                     </div>
                     <div className="text-xs space-y-1">
                       <div>
-                        <span className="text-gray-600">Timestamp:</span> {new Date(hoveredQuery.timestamp).toLocaleString()}
+                        <span className="text-gray-600">Timestamp:</span> {formatTimestampInTimezone(hoveredQuery.timestamp, timezone)}
                       </div>
                       <div>
                         <span className="text-gray-600">Operation:</span> {hoveredQuery.operationType}
@@ -1472,7 +1932,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                     </p>
                   </div>
                 )}
-                <p className="text-yellow-400 text-xs mt-2">
+                <p className="text-green-400 text-xs mt-2">
                   Debug: slowQueries = {analytics.slowQueries ? analytics.slowQueries.length : 'undefined'}, filtered = {filteredQueries.length}
                 </p>
               </div>
@@ -1483,10 +1943,10 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
 
       {/* Timeline Analysis Widget */}
       <div className="bg-white rounded-xl p-4 lg:p-6 border border-gray-300">
-        <h3 className="text-lg lg:text-xl font-semibold text-purple-600 mb-4">⏰ Timeline Analysis</h3>
+        <h3 className="text-lg lg:text-xl font-semibold text-green-600 mb-4">⏰ Timeline Analysis</h3>
         
-        <div className="mb-6 border border-purple-300 rounded-lg p-4">
-          <h4 className="text-purple-700 font-semibold mb-3">🕐 Queries Running at Specific Time</h4>
+        <div className="mb-6 border border-green-300 rounded-lg p-4">
+          <h4 className="text-green-700 font-semibold mb-3">🕐 Queries Running at Specific Time</h4>
           
           {/* Timestamp Input Section */}
           <div className="mb-4 bg-gray-50 rounded-lg p-3 border border-gray-200">
@@ -1507,14 +1967,39 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                   />
                 </div>
                 <button
-                  onClick={() => analyzeQueriesAtTimestamp(selectedTimestamp)}
+                  onClick={() => {
+                    console.log('🔄 Manual refresh triggered', { 
+                      selectedTimestamp, 
+                      hasAnalytics: !!analytics,
+                      slowQueriesCount: analytics?.slowQueries?.length || 0,
+                      timelineQueriesLength: timelineQueries.length
+                    });
+                    if (!selectedTimestamp) {
+                      console.error('❌ No timestamp selected for analysis');
+                      return;
+                    }
+                    if (!analytics?.slowQueries) {
+                      console.error('❌ No analytics or slow queries data available');
+                      return;
+                    }
+                    analyzeQueriesAtTimestamp(selectedTimestamp);
+                  }}
                   disabled={!selectedTimestamp}
-                  className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-200 disabled:cursor-not-allowed text-gray-800 px-4 py-2 rounded text-sm font-medium transition-colors"
+                  className="bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-2"
+                  title="Refresh timeline analysis with current filters"
                 >
-                  Analyze Timeline
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Refresh Analysis
                 </button>
-                <div className="text-sm text-gray-600">
-                  Found: {timelineQueries.length} concurrent queries{timelineOperationFilter ? ` (${timelineOperationFilter} operations)` : ''}
+                <div className="text-sm text-gray-600 space-y-1">
+                  <div>
+                    Found: {timelineQueries.length} concurrent queries{timelineOperationFilter ? ` (${timelineOperationFilter} operations)` : ''}
+                  </div>
+                  <div className="text-xs text-green-600">
+                    💡 Analysis updates automatically when timestamp changes
+                  </div>
                 </div>
               </div>
               
@@ -1590,7 +2075,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                           analyzeQueriesAtTimestamp(selectedTimestamp);
                         }
                       }}
-                      className="bg-purple-600 hover:bg-purple-700 text-gray-800 px-2 py-1 rounded text-xs font-medium transition-colors"
+                      className="bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded text-xs font-medium transition-colors"
                     >
                       Clear Filter
                     </button>
@@ -1611,7 +2096,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                           analyzeQueriesAtTimestamp(selectedTimestamp);
                         }
                       }}
-                      className="w-4 h-4 text-purple-600 bg-white border-gray-200 rounded focus:ring-purple-500 focus:ring-2"
+                      className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2"
                     />
                     <span>InMemorySorts</span>
                   </label>
@@ -1627,7 +2112,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                           analyzeQueriesAtTimestamp(selectedTimestamp);
                         }
                       }}
-                      className="w-4 h-4 text-purple-600 bg-white border-gray-200 rounded focus:ring-purple-500 focus:ring-2"
+                      className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2"
                     />
                     <span>FromMultiPlanner</span>
                   </label>
@@ -1643,7 +2128,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                           analyzeQueriesAtTimestamp(selectedTimestamp);
                         }
                       }}
-                      className="w-4 h-4 text-purple-600 bg-white border-gray-200 rounded focus:ring-purple-500 focus:ring-2"
+                      className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2"
                     />
                     <span>Exclude Errored Queries</span>
                   </label>
@@ -1684,9 +2169,8 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
           {/* Timeline Visualization */}
           {showTimelineAnalysis && timelineQueries.length > 0 && (
             <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-              <h5 className="text-purple-300 font-semibold mb-3">
-                Queries Running at {selectedTimestamp ? new Date(selectedTimestamp).toLocaleString('en-IN', {
-                  timeZone: 'Asia/Kolkata',
+              <h5 className="text-green-600 font-semibold mb-3">
+                Queries Running at {selectedTimestamp ? formatTimestampInTimezone(selectedTimestamp, timezone, {
                   year: 'numeric',
                   month: '2-digit',
                   day: '2-digit',
@@ -1699,6 +2183,10 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
               
               {/* Timeline Chart */}
               <div className="relative w-full h-80 bg-gray-900 rounded border border-gray-300 overflow-hidden mb-4">
+                {/* Click instruction */}
+                <div className="absolute top-2 left-2 z-10 bg-black bg-opacity-70 text-white text-xs px-3 py-1 rounded shadow-sm">
+                  💡 Click anywhere on timeline to analyze queries at that time
+                </div>
                 <svg className="w-full h-full" viewBox="0 0 800 320">
                   {(() => {
                     if (timelineQueries.length === 0) return null;
@@ -1718,6 +2206,45 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                       <>
                         {/* Background */}
                         <rect x="0" y="0" width="800" height="320" fill="#ffffff" />
+                        
+                        {/* Clickable timeline area */}
+                        <rect 
+                          x={margin} 
+                          y="20" 
+                          width={chartWidth} 
+                          height={chartHeight - 20} 
+                          fill="transparent" 
+                          className="cursor-crosshair hover:fill-blue-50 hover:fill-opacity-20"
+                          onClick={(e) => {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const svg = e.currentTarget.ownerSVGElement;
+                            if (!svg) return;
+                            
+                            const svgRect = svg.getBoundingClientRect();
+                            const x = e.clientX - svgRect.left;
+                            
+                            // Convert screen coordinates to SVG coordinates
+                            const svgX = (x / svgRect.width) * 800;
+                            
+                            // Convert SVG X coordinate to time
+                            const relativeX = (svgX - margin) / chartWidth;
+                            const clickedTime = startTime + (relativeX * timeRange);
+                            
+                            // Set the timestamp
+                            const clickedDate = new Date(clickedTime);
+                            const timeString = clickedDate.toISOString().slice(0, 19); // Remove Z and milliseconds
+                            
+                            console.log('🎯 Timeline clicked:', {
+                              svgX,
+                              relativeX, 
+                              clickedTime,
+                              formattedTime: timeString
+                            });
+                            
+                            setSelectedTimestamp(timeString);
+                            // Analysis will be triggered automatically via useEffect
+                          }}
+                        />
                         
                         {/* Time axis */}
                         <line x1={margin} y1={chartHeight} x2={800 - margin} y2={chartHeight} stroke="#6B7280" strokeWidth="2"/>
@@ -1912,7 +2439,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                     <div className="flex justify-between items-start">
                       <div className="flex-1">
                         <div className="flex items-center space-x-2 mb-1">
-                          <span className="text-purple-400 text-sm font-mono">#{index + 1}</span>
+                          <span className="text-green-600 text-sm font-mono">#{index + 1}</span>
                           <span className="text-blue-600 text-sm">{query.namespace || 'unknown'}</span>
                           <span className="text-yellow-400 text-xs px-2 py-1 bg-yellow-900 rounded">
                             {query.duration || 0}ms
@@ -1950,11 +2477,25 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
           )}
           
           {showTimelineAnalysis && timelineQueries.length === 0 && selectedTimestamp && (
-            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 text-center">
-              <p className="text-gray-700">No queries were running at the selected timestamp.</p>
-              <p className="text-gray-600 text-sm mt-1">
-                Try selecting a different time or check if your log data contains queryStartTime and queryEndTime.
-              </p>
+            <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200 text-center">
+              <div className="text-yellow-800 mb-2">
+                <svg className="w-8 h-8 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.464 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+                <p className="font-semibold">No queries were running at the selected timestamp</p>
+              </div>
+              <div className="text-yellow-700 text-sm space-y-1">
+                <p>Timestamp: {formatTimestampInTimezone(selectedTimestamp, timezone)}</p>
+                <div className="mt-3 space-y-1">
+                  <p><strong>Troubleshooting:</strong></p>
+                  <ul className="text-left inline-block">
+                    <li>• Try clicking on a different time on the timeline chart above</li>
+                    <li>• Check if your filters are too restrictive</li>
+                    <li>• Verify your log data contains query timing information</li>
+                    <li>• Try a timestamp when you know queries were active</li>
+                  </ul>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -2046,6 +2587,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
         </div>
       </div>
 
+
       {/* Query Details Modal */}
       {showQueryModal && selectedQuery && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -2054,14 +2596,16 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
               <div className="flex justify-between items-center">
                 <h3 className="text-xl font-semibold text-yellow-600">🔍 Query Details</h3>
                 <div className="flex items-center space-x-4">
-                  <button
-                    onClick={handleAskAI}
-                    disabled={isLoadingAi}
-                    className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                  >
-                    <span>🤖</span>
-                    <span>{isLoadingAi ? 'Analyzing...' : 'Ask AI'}</span>
-                  </button>
+                  {AI_FEATURE_ENABLED && (
+                    <button
+                      onClick={handleAskAI}
+                      disabled={isLoadingAi}
+                      className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    >
+                      <span>🤖</span>
+                      <span>{isLoadingAi ? 'Analyzing...' : 'Ask AI'}</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setShowQueryModal(false);
@@ -2074,34 +2618,37 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                 </div>
               </div>
               
-              {/* Tab Navigation */}
-              <div className="flex space-x-4 mt-4">
-                <button
-                  onClick={() => setActiveTab('query')}
-                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                    activeTab === 'query'
-                      ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
-                      : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
-                  }`}
-                >
-                  Query Details
-                </button>
-                <button
-                  onClick={() => setActiveTab('ai')}
-                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                    activeTab === 'ai'
-                      ? 'bg-purple-100 text-purple-800 border border-purple-300'
-                      : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
-                  }`}
-                >
-                  AI Analysis
-                  {aiResponse && <span className="ml-1 w-2 h-2 bg-green-500 rounded-full inline-block"></span>}
-                </button>
-              </div>
+              {/* Tab Navigation - Only show tabs if AI is enabled */}
+              {AI_FEATURE_ENABLED && (
+                <div className="flex space-x-4 mt-4">
+                  <button
+                    onClick={() => setActiveTab('query')}
+                    className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                      activeTab === 'query'
+                        ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
+                        : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                    }`}
+                  >
+                    Query Details
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('ai')}
+                    className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                      activeTab === 'ai'
+                        ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                        : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                    }`}
+                  >
+                    AI Analysis
+                    {aiResponse && <span className="ml-1 w-2 h-2 bg-green-500 rounded-full inline-block"></span>}
+                  </button>
+                </div>
+              )}
             </div>
             
             <div className="p-6 overflow-y-auto max-h-[calc(90vh-120px)]">
-              {activeTab === 'query' ? (
+              {/* Show Query Details - If AI is disabled, always show query tab; if enabled, show based on activeTab */}
+              {(!AI_FEATURE_ENABLED || activeTab === 'query') ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Basic Query Info */}
                 <div className="space-y-4">
@@ -2186,10 +2733,10 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                         <div><span className="text-gray-600">Query Framework:</span> <span className="text-purple-400">{selectedQuery.queryFramework}</span></div>
                       )}
                       {selectedQuery.queryStartTime && (
-                        <div><span className="text-gray-600">Query Start Time (IST):</span> <span className="text-gray-700">{formatTimestampIST(selectedQuery.queryStartTime)}</span></div>
+                        <div><span className="text-gray-600">Query Start Time ({timezone}):</span> <span className="text-gray-700">{formatTimestampIST(selectedQuery.queryStartTime)}</span></div>
                       )}
                       {selectedQuery.queryEndTime && (
-                        <div><span className="text-gray-600">Query End Time (IST):</span> <span className="text-gray-700">{formatTimestampIST(selectedQuery.queryEndTime)}</span></div>
+                        <div><span className="text-gray-600">Query End Time ({timezone}):</span> <span className="text-gray-700">{formatTimestampIST(selectedQuery.queryEndTime)}</span></div>
                       )}
                       {selectedQuery.queryHash && (
                         <div><span className="text-gray-600">Query Hash:</span> <span className="text-gray-700 font-mono text-sm">{selectedQuery.queryHash}</span></div>
@@ -2279,7 +2826,8 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                 </div>
               </div>
               ) : (
-                /* AI Response Tab */
+                /* AI Response Tab - Only show if AI is enabled */
+                AI_FEATURE_ENABLED && (
                 <div className="space-y-4">
                   <div className="flex items-center space-x-2 mb-4">
                     <span className="text-2xl">🤖</span>
@@ -2302,12 +2850,14 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                         <span className="text-red-800 font-medium">Error</span>
                       </div>
                       <p className="text-red-700 mt-2">{aiError}</p>
-                      <button
-                        onClick={handleAskAI}
-                        className="mt-3 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                      >
-                        Try Again
-                      </button>
+                      {AI_FEATURE_ENABLED && (
+                        <button
+                          onClick={handleAskAI}
+                          className="mt-3 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                        >
+                          Try Again
+                        </button>
+                      )}
                     </div>
                   )}
                   
@@ -2352,6 +2902,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                     </div>
                   )}
                 </div>
+                )
               )}
             </div>
           </div>

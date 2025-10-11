@@ -187,8 +187,8 @@ export default function FileUpload({ onUpload, loading = false, accept = '.log,.
         <div
           className={`relative border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
             dragActive
-              ? 'border-green-400 bg-gray-100'
-              : 'border-gray-600 hover:border-gray-500 bg-gray-100'
+              ? 'border-green-400 bg-green-50'
+              : 'border-green-300 hover:border-green-400 bg-white'
           } ${loading ? 'opacity-50 pointer-events-none' : ''}`}
           onDragEnter={handleDrag}
           onDragLeave={handleDrag}
@@ -206,7 +206,7 @@ export default function FileUpload({ onUpload, loading = false, accept = '.log,.
           />
 
           <div className="space-y-4">
-            <div className="mx-auto h-12 w-12 text-gray-600">
+            <div className="mx-auto h-12 w-12 text-green-500">
               <svg
                 className="h-12 w-12"
                 stroke="currentColor"
@@ -224,10 +224,10 @@ export default function FileUpload({ onUpload, loading = false, accept = '.log,.
             </div>
 
             <div>
-              <p className="text-sm text-gray-700">
+              <p className="text-sm text-green-800">
                 <button
                   type="button"
-                  className="font-medium text-green-600 hover:text-green-300 focus:outline-none focus:underline"
+                  className="font-medium text-green-600 hover:text-green-700 focus:outline-none focus:underline"
                   onClick={onButtonClick}
                   disabled={loading}
                 >
@@ -235,7 +235,7 @@ export default function FileUpload({ onUpload, loading = false, accept = '.log,.
                 </button>{' '}
                 or drag and drop
               </p>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-green-600">
                 MongoDB log files (.log or .gz) - Multiple files supported
               </p>
             </div>
@@ -249,24 +249,24 @@ export default function FileUpload({ onUpload, loading = false, accept = '.log,.
         </div>
       ) : (
         // File classification interface
-        <div className="bg-gray-100 border border-gray-300 rounded-lg p-8">
+        <div className="bg-white border border-green-200 rounded-lg p-8">
           <div className="text-center mb-8">
             <h3 className="text-2xl font-bold text-green-600 mb-2">Classify Your Files</h3>
-            <p className="text-gray-600 max-w-2xl mx-auto">
-              Please mark each file as either <span className="text-green-300 font-semibold">Primary</span> (main logs) or <span className="text-blue-300 font-semibold">Secondary</span> (supplementary logs) to help organize your MongoDB log analysis.
+            <p className="text-green-700 max-w-2xl mx-auto">
+              Please mark each file as either <span className="text-green-600 font-semibold">Primary</span> (main logs) or <span className="text-green-500 font-semibold">Secondary</span> (supplementary logs) to help organize your MongoDB log analysis.
             </p>
           </div>
 
           {/* Global MongoDB Version Selection */}
-          <div className="bg-gray-200 rounded-xl p-6 mb-6 border border-gray-600">
+          <div className="bg-green-50 rounded-xl p-6 mb-6 border border-green-200">
             <div className="flex items-center justify-center space-x-4">
-              <label className="text-lg font-medium text-green-600">
+              <label className="text-lg font-medium text-green-700">
                 MongoDB Version for this upload batch:
               </label>
               <select
                 value={mongodbVersion}
                 onChange={(e) => setMongodbVersion(e.target.value)}
-                className="px-4 py-2 bg-gray-600 border border-gray-500 rounded-lg text-gray-900 text-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent min-w-48"
+                className="px-4 py-2 bg-white border border-green-300 rounded-lg text-green-800 text-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent min-w-48"
               >
                 <option value="">Select MongoDB Version</option>
                 {getSupportedMongoDBVersions().map(version => (
@@ -276,25 +276,25 @@ export default function FileUpload({ onUpload, loading = false, accept = '.log,.
                 ))}
               </select>
             </div>
-            <p className="text-center text-gray-600 text-sm mt-2">
+            <p className="text-center text-green-600 text-sm mt-2">
               This version will be applied to all {selectedFiles.length} file{selectedFiles.length > 1 ? 's' : ''} in this upload
             </p>
           </div>
           
           <div className="grid gap-6 mb-8">
             {selectedFiles.map((item, index) => (
-              <div key={index} className="bg-gray-200 rounded-xl border border-gray-600 p-6 hover:border-gray-500 transition-colors">
+              <div key={index} className="bg-green-50 rounded-xl border border-green-200 p-6 hover:border-green-300 transition-colors">
                 <div className="flex items-center justify-between">
                   <div className="flex-1 min-w-0 mr-6">
                     <div className="flex items-center space-x-3 mb-2">
-                      <div className="p-2 bg-gray-600 rounded-lg">
+                      <div className="p-2 bg-green-100 rounded-lg">
                         <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
                       </div>
                       <div>
-                        <div className="text-lg font-medium text-green-300 truncate">{item.cleanedName}</div>
-                        <div className="text-sm text-gray-600">
+                        <div className="text-lg font-medium text-green-700 truncate">{item.cleanedName}</div>
+                        <div className="text-sm text-green-600">
                           {(item.file.size / 1024 / 1024).toFixed(2)} MB • {item.file.name}
                         </div>
                       </div>

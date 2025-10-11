@@ -2,6 +2,143 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getLogFilesCollection } from '@/lib/mongodb';
 import { checkDriverCompatibility, checkCombinedDriverCompatibility } from '@/lib/driverCompatibility';
 
+// Helper function to ensure date is in UTC
+function toUTC(date: Date): Date {
+  // Ensure we're working with UTC timestamps
+  return new Date(date.toISOString());
+}
+
+// Helper function to create UTC date from date string
+function createUTCDate(dateString: string): Date {
+  // Parse the date string and treat it as UTC
+  const date = new Date(dateString + 'T00:00:00Z');
+  return date;
+}
+
+// Helper function to create date filter based on provided dates or max date from data
+function createDateFilter(startDate?: Date, endDate?: Date, maxDate?: Date, startTime?: string, endTime?: string, timeFilter?: string) {
+  let dayStart: Date;
+  let dayEnd: Date;
+  
+  if (startDate && endDate) {
+    // Use provided date range - database timestamps are now in UTC
+    dayStart = new Date(startDate);
+    dayEnd = new Date(endDate);
+    
+    // Set UTC time boundaries for the date range
+    if (startTime) {
+      const [hours, minutes, seconds] = startTime.split(':').map(n => parseInt(n));
+      dayStart.setUTCHours(hours || 0, minutes || 0, seconds || 0, 0);
+    } else {
+      dayStart.setUTCHours(0, 0, 0, 0);
+    }
+    
+    if (endTime) {
+      const [hours, minutes, seconds] = endTime.split(':').map(n => parseInt(n));
+      dayEnd.setUTCHours(hours || 23, minutes || 59, seconds || 59, 999);
+    } else {
+      dayEnd.setUTCHours(23, 59, 59, 999);
+    }
+  } else if (maxDate) {
+    // Use full day of max date (default behavior)
+    // maxDate from database is now in UTC
+    dayStart = new Date(maxDate);
+    dayStart.setUTCHours(0, 0, 0, 0);
+    
+    dayEnd = new Date(maxDate);
+    dayEnd.setUTCHours(23, 59, 59, 999);
+  } else {
+    throw new Error('Either startDate/endDate or maxDate must be provided');
+  }
+  
+  // Handle time-of-day filter (e.g., "12-18" for 12:00-18:00)
+  let timeOfDayFilter = {};
+  if (timeFilter) {
+    const [startHour, endHour] = timeFilter.split('-').map(t => parseInt(t));
+    
+    if (startHour <= endHour) {
+      // Normal range (e.g., 9-17 for 9am to 5pm)
+      timeOfDayFilter = {
+        $expr: {
+          $and: [
+            { $gte: [{ $hour: "$logTimestamp" }, startHour] },
+            { $lt: [{ $hour: "$logTimestamp" }, endHour] }
+          ]
+        }
+      };
+    } else {
+      // Overnight range (e.g., 22-6 for 10pm to 6am)
+      timeOfDayFilter = {
+        $expr: {
+          $or: [
+            { $gte: [{ $hour: "$logTimestamp" }, startHour] },
+            { $lt: [{ $hour: "$logTimestamp" }, endHour] }
+          ]
+        }
+      };
+    }
+  }
+  
+  return {
+    $and: [
+      {
+        logTimestamp: { 
+          $gte: dayStart,
+          $lte: dayEnd
+        }
+      },
+      ...(Object.keys(timeOfDayFilter).length > 0 ? [timeOfDayFilter] : [])
+    ]
+  };
+}
+
+// Helper function to create additional filters for slow queries
+function createSlowQueryFilters(operationFilter?: string, namespaceFilter?: string, excludeSystemNamespaces?: boolean, inMemorySortsFilter?: boolean, fromMultiPlannerFilter?: boolean) {
+  const additionalFilters: any[] = [];
+  
+  // Operation type filter
+  if (operationFilter) {
+    additionalFilters.push({
+      "attr.type": operationFilter
+    });
+  }
+  
+  // Namespace filter
+  if (namespaceFilter) {
+    additionalFilters.push({
+      "attr.ns": namespaceFilter
+    });
+  }
+  
+  // Exclude system namespaces
+  if (excludeSystemNamespaces) {
+    additionalFilters.push({
+      "attr.ns": { 
+        $not: { 
+          $regex: "^(admin|config|local)\\." 
+        } 
+      }
+    });
+  }
+  
+  // In-memory sorts filter
+  if (inMemorySortsFilter) {
+    additionalFilters.push({
+      "attr.hasSortStage": true
+    });
+  }
+  
+  // Multi-planner filter
+  if (fromMultiPlannerFilter) {
+    additionalFilters.push({
+      "attr.fromMultiPlanner": true
+    });
+  }
+  
+  return additionalFilters;
+}
+
+
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const { searchParams } = new URL(request.url);
@@ -24,53 +161,50 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const collection = await getLogFilesCollection();
     
-    // Add performance monitoring to identify slowest queries
-    console.log('🚀 Starting analytics queries...');
+    console.log('🔍 Static Analytics API - Getting latest day data (IST timezone aware)...');
+    
+    // Always get max date and use full day for static analytics
+    const timestampRangeResult = await collection.aggregate([
+      { $match: { 
+        sourceFile, 
+        userEmail,
+        logTimestamp: { $exists: true, $ne: null }
+      }},
+      {
+        $group: {
+          _id: null,
+          minTimestamp: { $min: "$logTimestamp" },
+          maxTimestamp: { $max: "$logTimestamp" },
+          totalLogs: { $sum: 1 }
+        }
+      }
+    ]).toArray();
+
+    const timeRange = timestampRangeResult[0] || { minTimestamp: null, maxTimestamp: null, totalLogs: 0 };
+    
+    if (!timeRange.maxTimestamp) {
+      return NextResponse.json({
+        success: false,
+        message: 'No log data with valid logTimestamp found for the specified source file'
+      }, { status: 404 });
+    }
+
+    // Create date filter for the full day of the max timestamp (static - always latest day)
+    const dateFilter = createDateFilter(undefined, undefined, new Date(timeRange.maxTimestamp));
+    const maxDateStr = new Date(timeRange.maxTimestamp).toISOString().split('T')[0];
+    const filterDescription = `${maxDateStr} (latest day - static)`;
+    
+      console.log(`🚀 Static Analytics API - Using latest day (IST): ${maxDateStr} (00:00:00 - 23:59:59)...`);
     const startTime = Date.now();
     
-    // Run all aggregation pipelines in parallel for better performance
+    // Run all static analytics pipelines in parallel (excluding query performance data)
     const [
-      timestampRange,
       connectionStats,
       slowOperations,
-      slowQueries,
       authEvents,
       indexUsage,
       healthEvents
     ] = await Promise.all([
-      // Get overall timestamp range for the log file using extracted timestamps
-      (async () => {
-        const queryStart = Date.now();
-        const result = await collection.aggregate([
-          { $match: { sourceFile, userEmail } },
-          {
-            $group: {
-              _id: null,
-              minTimestamp: { 
-                $min: {
-                  $cond: {
-                    if: { $ne: ["$logTimestamp", null] },
-                    then: "$logTimestamp",
-                    else: "$uploadDate"
-                  }
-                }
-              },
-              maxTimestamp: { 
-                $max: {
-                  $cond: {
-                    if: { $ne: ["$logTimestamp", null] },
-                    then: "$logTimestamp",
-                    else: "$uploadDate"
-                  }
-                }
-              },
-              totalLogs: { $sum: 1 }
-            }
-          }
-        ]).toArray();
-        console.log(`⏱️  Timestamp Range Query: ${Date.now() - queryStart}ms`);
-        return result;
-      })(),
 
       // Connection Analytics - Application Connections
       (async () => {
@@ -78,26 +212,33 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         const result = await collection.aggregate([
           {
             $match: {
-              sourceFile,
-              userEmail,
-              c: "NETWORK",
-              msg: "client metadata",
-              "attr.doc.driver.name": {
-                $nin: ["MongoDB Internal Client","NetworkInterfaceTL-ReplNodeDbWorkerNetwork"],
-                $not :{
-                    $regex: "networkinterface",
-                  $options: "i"
-                }
-              },
-              "attr.doc.application.name": {
-                $nin: ["NetworkInterfaceTL-ReplCoordExternNetwork", "Studio 3T Community Edition", "Studio 3T", "mongot steady state sync"],
-                $not :{
-                  $regex: "compass|mongodb|mongosh|mongo shell|mongot",
-                  $options: "i"
-                }
-              }
+              $and: [
+                {
+                  sourceFile,
+                  userEmail,
+                  c: "NETWORK",
+                  msg: "client metadata",
+                  "attr.doc.driver.name": {
+                    $nin: ["MongoDB Internal Client","NetworkInterfaceTL-ReplNodeDbWorkerNetwork"],
+                    $not :{
+                        $regex: "networkinterface",
+                      $options: "i"
+                    }
+                  },
+                  "attr.doc.application.name": {
+                    $nin: ["NetworkInterfaceTL-ReplCoordExternNetwork", "Studio 3T Community Edition", "Studio 3T", "mongot steady state sync"],
+                    $not :{
+                      $regex: "compass|mongodb|mongosh|mongo shell|mongot",
+                      $options: "i"
+                    }
+                  }
+                },
+                dateFilter
+              ]
             }
           },
+          // Add $sample stage to limit data before grouping (helps prevent huge arrays)
+          { $sample: { size: 10000 } },
           {
             $group: {
               _id: {
@@ -141,7 +282,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           {
             $project: {
               appName: "$_id.appName",
-              driverName: "$_id.driverName",
+              driverName: "$_id.driverName", 
               driverVersion: "$_id.driverVersion",
               mongodbVersion: "$_id.mongodbVersion",
               remoteIPs: { 
@@ -152,12 +293,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
                       cond: { $ne: ["$$this", null] }
                     }
                   }, 
-                  10
+                  50  // Increased from 10 to 50 since we're limiting input data
                 ]
               },
               totalConnections: "$count",
-              totalUniqueIPs: { $size: "$remoteIPs" },
-              allRemoteIPs: "$remoteIPs"  // Keep original array for debugging
+              totalUniqueIPs: { $size: "$remoteIPs" }
+              // Removed allRemoteIPs to prevent BSON size issues
             }
           }
         ]).toArray();
@@ -171,10 +312,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         const result = await collection.aggregate([
           { 
             $match: { 
-              sourceFile,
-              userEmail,
-              //msg: { $regex: RegExp("slow query", "i") }
-              msg: "Slow query"
+              $and: [
+                {
+                  sourceFile,
+                  userEmail,
+                  //msg: { $regex: RegExp("slow query", "i") }
+                  msg: "Slow query"
+                },
+                dateFilter
+              ]
             }
           },
           {
@@ -200,202 +346,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         return result;
       })(),
 
-      // Slow Query Analysis for scatter plot
-      (async () => {
-        const queryStart = Date.now();
-        
-        // Define the aggregation pipeline
-        const slowQueriesPipeline = [
-          { 
-            $match: { 
-              sourceFile,
-              userEmail,
-              msg: "Slow query",
-              // Exclude system databases
-              /*"attr.ns": { 
-                $not: { 
-                  $regex: "^(local|admin|config)\\." 
-                } 
-              },
-              /*$or: [
-                // Slow query messages
-                { 
-                  $and: [
-                    { msg: { $regex: RegExp("slow query", "i") } },
-                    { "attr.durationMillis": { $gte: 100 } }
-                  ]
-                },
-                // CRUD operations in COMMAND component with duration
-                { 
-                  $and: [
-                    { c: "COMMAND" },
-                    { $or: [
-                      { "attr.command.find": { $exists: true } },
-                      { "attr.command.aggregate": { $exists: true } },
-                      { "attr.command.update": { $exists: true } },
-                      { "attr.command.delete": { $exists: true } },
-                      { "attr.command.insert": { $exists: true } },
-                      { "attr.command.findAndModify": { $exists: true } },
-                      { "attr.command.count": { $exists: true } }
-                    ]},
-                    { "attr.durationMillis": { $gte: 50 } } // Commands taking 50ms or more
-                  ]
-                }
-              ]*/
-            }
-          },
-          {
-            $sort:{"attr.durationMillis":-1}
-          },
-          {
-            $project: {
-              timestamp: {
-                $cond: {
-                  if: { $ne: ["$logTimestamp", null] },
-                  then: "$logTimestamp",
-                  else: "$uploadDate"
-                }
-              },
-              duration: { 
-                $ifNull: [
-                  "$attr.durationMillis", 
-                  {
-                    $toInt: {
-                      $arrayElemAt: [
-                        { $split: [{ $arrayElemAt: [{ $split: ["$msg", " "] }, -1] }, "ms"] },
-                        0
-                      ]
-                    }
-                  }
-                ]
-              },
-              namespace: "$attr.ns",
-              operation: { $ifNull: ["$attr.type", "$attr.command"] },
-              planSummary: "$attr.planSummary",
-              command: "$attr.command",
-              filter: "$attr.command.filter",
-              pipeline: "$attr.command.pipeline",
-              sort: "$attr.command.sort",
-              docsExamined: "$attr.docsExamined",
-              docsReturned: "$attr.docsReturned",
-              keysExamined: "$attr.keysExamined",
-              numRowsReturnedByQuery: "$attr.nreturned",
-              //hasSortStage: "$attr.hasSortStage",
-              hasSortStage: { $ifNull: ["$attr.hasSortStage", false] },
-              message: "$msg",
-              queryHash: "$attr.queryHash",
-              planCacheKey: "$attr.planCacheKey",
-              component: "$c",
-              // Additional fields for new Y-axis metrics
-              reslen: "$attr.reslen",
-              numYields: "$attr.numYields",
-              // New requested fields
-              nReturned: "$attr.nReturned",
-              nreturned: "$attr.nreturned", // For ratio calculations (lowercase)
-              queryFramework: "$attr.queryFramework",
-              bytesRead: "$attr.storage.data.bytesRead",
-              timeReadingMicros: "$attr.storage.data.timeReadingMicros",
-              cpuNanos: "$attr.cpuNanos",
-              durationMillis: "$attr.durationMillis",
-              // Timeline Analysis timestamp fields
-              queryStartTime: {
-                $cond: {
-                  if: { 
-                    $and: [
-                      { $ne: ["$logTimestamp", null] },
-                      { $ne: ["$attr.durationMillis", null] }
-                    ]
-                  },
-                  then: {
-                    $subtract: [
-                      "$logTimestamp",
-                      "$attr.durationMillis" // Subtract duration from end time to get start time
-                    ]
-                  },
-                  else: null
-                }
-              },
-              queryEndTime: {
-                $cond: {
-                  if: { $ne: ["$logTimestamp", null] },
-                  then: "$logTimestamp", // logTimestamp is the query end time
-                  else: null
-                }
-              },
-              // New timing and execution fields
-              workingMillis: "$attr.workingMillis",
-              planningTimeMicros: "$attr.planningTimeMicros",
-              totalTimeQueuedMicros: "$attr.queues.execution.totalTimeQueuedMicros",
-              waitForWriteConcernDurationMillis: "$attr.waitForWriteConcernDurationMillis",
-              writeConflicts: "$attr.writeConflicts",
-              //fromPlanCache: "$attr.fromPlanCache",
-              fromPlanCache: { $ifNull: ["$attr.fromPlanCache", false] },
-              fromMultiPlanner: { $ifNull: ["$attr.fromMultiPlanner", false] },
-              // Error details for ErroredOut operations
-              errCode: "$attr.errCode",
-              errName: "$attr.errName",
-              errMsg: "$attr.errMsg",
-              // Additional storage metrics - calculated fields
-              dataReadMB: {
-                $cond: {
-                  if: { $ne: ["$attr.storage.data.bytesRead", null] },
-                  then: { $divide: ["$attr.storage.data.bytesRead", 1048576] }, // Convert bytes to MB
-                  else: null
-                }
-              },
-              timeSpentReadingSeconds: {
-                $cond: {
-                  if: { $ne: ["$attr.storage.data.timeReadingMicros", null] },
-                  then: { $divide: ["$attr.storage.data.timeReadingMicros", 1000000] }, // Convert microseconds to seconds
-                  else: null
-                }
-              },
-              cpuTimeSeconds: {
-                $cond: {
-                  if: { $ne: ["$attr.cpuNanos", null] },
-                  then: { $divide: ["$attr.cpuNanos", 1000000000] }, // Convert nanoseconds to seconds
-                  else: null
-                }
-              },
-              dirtyBytesMB: {
-                $cond: {
-                  if: { $ne: ["$attr.storage.data.txnBytesDirty", null] },
-                  then: { $divide: ["$attr.storage.data.txnBytesDirty", 1048576] }, // Convert bytes to MB
-                  else: null
-                }
-              },
-              // Calculate scanned/returned ratio
-              scannedReturnedRatio: {
-                $cond: {
-                  if: { 
-                    $and: [
-                      { $gt: ["$attr.docsReturned", 0] },
-                      { $ne: ["$attr.docsExamined", null] }
-                    ]
-                  },
-                  then: { $divide: ["$attr.docsExamined", "$attr.docsReturned"] },
-                  else: null
-                }
-              },
-              remoteIP: "$attr.remote"
-
-            }
-          },
-          {
-            $match: {
-              duration: { $exists: true, $gte: 0 } // Ensure we have valid duration
-            }
-          },
-          //{ $sort: { "duration": -1 } }
-        ];
-        
-        // Log the query being sent to MongoDB
-        console.log('🔍 SLOW QUERIES AGGREGATION PIPELINE:');
-        console.log(JSON.stringify(slowQueriesPipeline, null, 2));       
-        const result = await collection.aggregate(slowQueriesPipeline).toArray();
-        console.log(`⏱️  Slow Queries Query (LARGEST): ${Date.now() - queryStart}ms`);
-        return result;
-      })(),
 
       // Authentication Events
       (async () => {
@@ -403,12 +353,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         const result = await collection.aggregate([
           { 
             $match: { 
-              sourceFile,
-              userEmail,
-              $or: [
-                { c: "ACCESS" },
-                { msg: { $regex: /auth/i } },
-                { msg: { $regex: /login|logout|authenticate/i } }
+              $and: [
+                {
+                  sourceFile,
+                  userEmail,
+                  $or: [
+                    { c: "ACCESS" },
+                    { msg: { $regex: /auth/i } },
+                    { msg: { $regex: /login|logout|authenticate/i } }
+                  ]
+                },
+                dateFilter
               ]
             }
           },
@@ -453,19 +408,35 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         const result = await collection.aggregate([
           { 
             $match: { 
-              sourceFile,
-              userEmail,
-              $or: [
-                { msg: { $regex: /index/i } },
-                { "attr.planSummary": { $exists: true } }
+              $and: [
+                {
+                  sourceFile,
+                  userEmail,
+                  $or: [
+                    { msg: { $regex: /index/i } },
+                    { "attr.planSummary": { $exists: true } }
+                  ]
+                },
+                dateFilter
               ]
             }
           },
+          // Add sample stage to prevent BSON size issues
+          { $sample: { size: 5000 } },
           {
             $group: {
               _id: "$attr.planSummary",
               count: { $sum: 1 },
               collections: { $addToSet: "$attr.ns" }
+            }
+          },
+          {
+            $project: {
+              _id: 1,
+              count: 1,
+              // Limit collections array to prevent BSON size issues
+              collections: { $slice: ["$collections", 20] },
+              totalCollections: { $size: "$collections" }
             }
           },
           { $sort: { count: -1 } },
@@ -481,12 +452,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         const result = await collection.aggregate([
           { 
             $match: { 
-              sourceFile,
-              userEmail,
-              $or: [
-                { c: "CONTROL" },
-                { msg: { $regex: /start|stop|restart|shutdown/i } },
-                { msg: { $regex: /replica|shard|election/i } }
+              $and: [
+                {
+                  sourceFile,
+                  userEmail,
+                  $or: [
+                    { c: "CONTROL" },
+                    { msg: { $regex: /start|stop|restart|shutdown/i } },
+                    { msg: { $regex: /replica|shard|election/i } }
+                  ]
+                },
+                dateFilter
               ]
             }
           },
@@ -516,8 +492,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const totalTime = Date.now() - startTime;
     console.log(`🏁 All queries completed in: ${totalTime}ms`);
 
-    const timeRange = timestampRange[0] || { minTimestamp: null, maxTimestamp: null, totalLogs: 0 };
-
     
     // Add compatibility checking to connection stats
     const connectionStatsWithCompatibility = connectionStats.map(stat => {
@@ -540,34 +514,65 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       };
     });
 
-    // Debug logging
-    console.log('Connection Stats Sample:', JSON.stringify(connectionStats.slice(0, 2), null, 2));
-    console.log('Slow queries found:', slowQueries.length);
+    // Debug logging for static analytics
+    console.log('Static Analytics Results:');
+    console.log('- Connection Stats found:', connectionStats.length);
+    console.log('- Slow Operations found:', slowOperations.length);
+    console.log('- Auth Events found:', authEvents.length);
+    console.log('- Index Usage patterns found:', indexUsage.length);
+    console.log('- Health Events found:', healthEvents.length);
+    console.log('Connection Stats Sample (first 2):', JSON.stringify(connectionStats.slice(0, 2), null, 2));
     console.log('Timestamp range:', JSON.stringify(timeRange, null, 2));
-    if (slowQueries.length > 0) {
-      console.log('Sample slow queries with timestamps:', JSON.stringify(slowQueries.slice(0, 2), null, 2));
-    } else {
-      // If no queries found, let's check what we have in the collection
-      const sampleLogs = await collection.aggregate([
-        { $match: { sourceFile } },
-        { $limit: 5 },
-        { $project: { msg: 1, attr: 1, c: 1, t: 1, uploadDate: 1 } }
-      ]).toArray();
-      console.log('Sample logs for debugging (with timestamps):', JSON.stringify(sampleLogs, null, 2));
+    
+    // Debug driver compatibility processing
+    console.log('Driver compatibility debug:');
+    console.log('- Raw connection stats count:', connectionStats.length);
+    if (connectionStats.length > 0) {
+      const sample = connectionStats[0];
+      console.log('- Sample connection stat:', {
+        driverName: sample.driverName,
+        driverVersion: sample.driverVersion,
+        mongodbVersion: sample.mongodbVersion
+      });
+      
+      const testCompatibility = checkCombinedDriverCompatibility(
+        sample.driverName || '',
+        sample.driverVersion || '',
+        sample.mongodbVersion || ''
+      );
+      console.log('- Sample compatibility result:', testCompatibility);
     }
 
     // Connection Sources Analysis - DISABLED
-    const connectionSources: any[] = [];    return NextResponse.json({
+    const connectionSources: any[] = [];
+    
+    return NextResponse.json({
       success: true,
       analytics: {
         timestampRange: timeRange,
         connectionStats: connectionStatsWithCompatibility,
         slowOperations,
-        slowQueries,
         authEvents,
         connectionSources,
         indexUsage,
         healthEvents
+      },
+      metadata: {
+        dateRange: {
+          minLogTimestamp: timeRange.minTimestamp,
+          maxLogTimestamp: timeRange.maxTimestamp,
+          totalLogsWithTimestamp: timeRange.totalLogs
+        },
+        filterApplied: {
+          field: "logTimestamp", 
+          description: filterDescription,
+          dateFilter: dateFilter,
+          staticLatestDay: true,
+          maxDateUsed: timeRange.maxTimestamp
+        },
+        performance: {
+          totalQueryTime: totalTime
+        }
       }
     });
 

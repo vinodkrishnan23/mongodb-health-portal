@@ -2,12 +2,20 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #166534; /* green-800 for primary text */
+  --primary: #16a34a; /* green-600 for primary elements */
+  --primary-hover: #15803d; /* green-700 for hover states */
+  --secondary: #22c55e; /* green-500 for secondary elements */
+  --accent: #4ade80; /* green-400 for accents */
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-secondary: var(--secondary);
+  --color-accent: var(--accent);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -16,4 +24,38 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Custom green theme classes */
+.btn-primary {
+  background-color: var(--primary);
+  color: white;
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-weight: 600;
+  transition: background-color 0.2s;
+}
+
+.btn-primary:hover {
+  background-color: var(--primary-hover);
+}
+
+.text-theme-primary {
+  color: var(--primary);
+}
+
+.text-theme-secondary {
+  color: var(--secondary);
+}
+
+.bg-theme-primary {
+  background-color: var(--primary);
+}
+
+.bg-theme-secondary {
+  background-color: var(--secondary);
+}
+
+.border-theme-primary {
+  border-color: var(--primary);
 }
