@@ -353,6 +353,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     
     console.log(`🚀 Query Performance API - Starting queries for: ${filterDescription}...`);
     console.log(`🔍 Additional filters: operation=${operationFilter}, namespace=${namespaceFilter}, excludeSystem=${excludeSystemNamespaces}, inMemorySort=${inMemorySortsFilter}, multiPlanner=${fromMultiPlannerFilter}`);
+    console.log(`🔍 Date filter being applied:`, JSON.stringify(dateFilter, null, 2));
+    
+    // Debug: Check how many total documents match the basic filters before slow query filtering
+    const totalMatchingDocs = await collection.countDocuments({
+      sourceFile,
+      userEmail,
+      logTimestamp: dateFilter.logTimestamp
+    });
+    console.log(`📊 Total documents matching date filter: ${totalMatchingDocs}`);
     
     const startTime = Date.now();
 
@@ -516,6 +525,29 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const rawSlowQueries = await collection.aggregate(slowQueriesPipeline).toArray();
     console.log(`⏱️  Query Performance Query: ${Date.now() - queryStart}ms`);
     console.log(`📊 Raw slow queries retrieved: ${rawSlowQueries.length}`);
+    
+    // Debug: Check if there are any documents at all in the time range (not just slow ones)
+    const totalDocsInTimeRange = await collection.countDocuments({
+      sourceFile,
+      userEmail,
+      ...dateFilter
+    });
+    console.log(`📊 DEBUGGING: Total documents in time range: ${totalDocsInTimeRange}`);
+    
+    // Debug: Check slow query criteria being applied
+    if (rawSlowQueries.length === 0) {
+      console.log(`⚠️  No slow queries found - let's check why:`);
+      console.log(`🔍 Slow query filters applied:`, JSON.stringify(slowQueryAdditionalFilters, null, 2));
+      
+      // Check how many queries exist in the time range without slow filters
+      const basicQueryCount = await collection.countDocuments({
+        sourceFile,
+        userEmail,
+        logTimestamp: dateFilter.logTimestamp,
+        operation: { $exists: true, $ne: null }
+      });
+      console.log(`📊 Total queries in time range: ${basicQueryCount}`);
+    }
     
     // Apply post-aggregation operation type filter (matches frontend logic)
     const slowQueries = applyPostAggregationFilters(rawSlowQueries, operationFilter || undefined);
