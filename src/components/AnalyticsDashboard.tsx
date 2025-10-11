@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useTimezone } from '@/context/TimezoneContext';
-import { formatTimestampInTimezone } from '@/lib/timezone';
+import { formatTimestampInTimezone, convertTimezoneToUTC } from '@/lib/timezone';
 
 interface AnalyticsData {
   timestampRange: {
@@ -104,7 +104,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
 
   // Stabilize slowQueries to prevent filtering useEffect from running constantly
   const slowQueries = useMemo(() => {
-    console.log('🔍 slowQueries memoized, analytics changed');
+    // console.log('🔍 slowQueries memoized, analytics changed');
     return analytics?.slowQueries || [];
   }, [analytics]);
 
@@ -124,7 +124,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
 
   // Fetch available dates from logs
   const fetchAvailableDates = async () => {
-    console.log('📡 fetchAvailableDates called');
+    // console.log('📡 fetchAvailableDates called');
     try {
       setLoadingDates(true);
       const response = await fetch(`/api/dates?sourceFile=${encodeURIComponent(sourceFile)}`, {
@@ -135,14 +135,14 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
       const data = await response.json();
       
       if (data.success) {
-        console.log('📅 Available dates received:', data.dates);
+        // console.log('📅 Available dates received:', data.dates);
         const dates = data.dates || [];
         setAvailableDates(dates);
         
         // Auto-select the latest date (first in the array since they're sorted newest first)
         if (dates.length > 0 && !selectedQuickDate) {
           const latestDate = dates[0];
-          console.log('📅 Auto-selecting latest date for query performance:', latestDate);
+          // console.log('📅 Auto-selecting latest date for query performance:', latestDate);
           setStartDate(latestDate);
           setEndDate(latestDate);
           setSelectedQuickDate(latestDate);
@@ -163,7 +163,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
 
   // Fetch static analytics (connection stats, auth events, etc.) - always latest day
   const fetchStaticAnalytics = async () => {
-    console.log('📡 fetchStaticAnalytics called (latest day data)');
+    // console.log('📡 fetchStaticAnalytics called (latest day data)');
     try {
       const response = await fetch(`/api/analytics?sourceFile=${encodeURIComponent(sourceFile)}`, {
         headers: {
@@ -173,14 +173,14 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
       const data = await response.json();
       
       if (data.success) {
-        console.log('📊 Setting static analytics data');
+        // console.log('📊 Setting static analytics data');
         setAnalytics(data.analytics);
-        console.log('Static analytics received:', data.analytics);
+        // console.log('Static analytics received:', data.analytics);
         console.log('Timestamp range:', data.analytics.timestampRange);
         
         // Set default date range from static analytics
         if (data.analytics.timestampRange?.minTimestamp && data.analytics.timestampRange?.maxTimestamp) {
-          console.log('📊 Setting initial date range from static analytics');
+          // console.log('📊 Setting initial date range from static analytics');
           const minDate = new Date(data.analytics.timestampRange.minTimestamp);
           const maxDate = new Date(data.analytics.timestampRange.maxTimestamp);
           setStartDate(minDate.toISOString().split('T')[0]);
@@ -211,7 +211,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     inMemorySortsFilter?: boolean;
     fromMultiPlannerFilter?: boolean;
   }) => {
-    console.log('📡 fetchQueryPerformance called with filters:', filterParams);
+    // console.log('📡 fetchQueryPerformance called with filters:', filterParams);
     try {
       setQueryPerformanceLoading(true); // Use separate loading state
       
@@ -220,21 +220,100 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
         sourceFile: sourceFile
       });
       
-      // Add filter parameters if provided
-      if (filterParams?.startDate) params.set('startDate', filterParams.startDate);
-      if (filterParams?.endDate) params.set('endDate', filterParams.endDate);
-      if (filterParams?.startTime) params.set('startTime', filterParams.startTime);
-      if (filterParams?.endTime) params.set('endTime', filterParams.endTime);
+      // Convert timezone-aware dates to UTC before sending to API
+      // console.log('🔍 About to process date filters:', {
+      //   startDate: filterParams?.startDate,
+      //   endDate: filterParams?.endDate,
+      //   startTime: filterParams?.startTime,
+      //   endTime: filterParams?.endTime,
+      //   timezone: timezone,
+      //   isQuickDateSelect: !filterParams?.startTime && !filterParams?.endTime
+      // });
+      
+      // For Quick Date Select (no time specified), don't apply timezone conversion
+      // For manual date+time filters, apply timezone conversion
+      if (filterParams?.startDate) {
+        if (filterParams.startTime) {
+          // Manual time specified - apply timezone conversion
+          try {
+            // console.log('🔍 Converting startDate (manual time)...', { date: filterParams.startDate, time: filterParams.startTime, timezone });
+            const utcStartDate = convertTimezoneToUTC(filterParams.startDate, filterParams.startTime, timezone);
+            // console.log('🔍 Raw convertTimezoneToUTC result for startDate:', utcStartDate);
+            
+            if (utcStartDate && utcStartDate instanceof Date && !isNaN(utcStartDate.getTime())) {
+              const utcDateStr = utcStartDate.toISOString().split('T')[0];
+              const utcTimeStr = utcStartDate.toISOString().split('T')[1].split('.')[0];
+              
+              params.set('startDate', utcDateStr);
+              params.set('startTime', utcTimeStr);
+              // console.log(`🌍 ✅ Converted startDate from ${timezone} to UTC:`, {
+              //   original: `${filterParams.startDate} ${filterParams.startTime}`,
+              //   utc: utcStartDate.toISOString(),
+              //   sentToAPI: { date: utcDateStr, time: utcTimeStr }
+              // });
+            } else {
+              console.warn('⚠️ Invalid utcStartDate returned from convertTimezoneToUTC, using original values:', utcStartDate);
+              params.set('startDate', filterParams.startDate);
+              params.set('startTime', filterParams.startTime);
+            }
+          } catch (error) {
+            console.error('❌ Error converting startDate to UTC:', error);
+            params.set('startDate', filterParams.startDate);
+            params.set('startTime', filterParams.startTime);
+          }
+        } else {
+          // No time specified (Quick Date Select) - use original date without timezone conversion
+          // console.log('🔍 Using startDate without timezone conversion (Quick Date Select):', filterParams.startDate);
+          params.set('startDate', filterParams.startDate);
+        }
+      }
+      
+      if (filterParams?.endDate) {
+        if (filterParams.endTime) {
+          // Manual time specified - apply timezone conversion
+          try {
+            // console.log('🔍 Converting endDate (manual time)...', { date: filterParams.endDate, time: filterParams.endTime, timezone });
+            const utcEndDate = convertTimezoneToUTC(filterParams.endDate, filterParams.endTime, timezone);
+            // console.log('🔍 Raw convertTimezoneToUTC result for endDate:', utcEndDate);
+            
+            if (utcEndDate && utcEndDate instanceof Date && !isNaN(utcEndDate.getTime())) {
+              const utcDateStr = utcEndDate.toISOString().split('T')[0];
+              const utcTimeStr = utcEndDate.toISOString().split('T')[1].split('.')[0];
+              
+              params.set('endDate', utcDateStr);
+              params.set('endTime', utcTimeStr);
+              // console.log(`🌍 ✅ Converted endDate from ${timezone} to UTC:`, {
+              //   original: `${filterParams.endDate} ${filterParams.endTime}`,
+              //   utc: utcEndDate.toISOString(),
+              //   sentToAPI: { date: utcDateStr, time: utcTimeStr }
+              // });
+            } else {
+              console.warn('⚠️ Invalid utcEndDate returned from convertTimezoneToUTC, using original values:', utcEndDate);
+              params.set('endDate', filterParams.endDate);
+              params.set('endTime', filterParams.endTime);
+            }
+          } catch (error) {
+            console.error('❌ Error converting endDate to UTC:', error);
+            params.set('endDate', filterParams.endDate);
+            params.set('endTime', filterParams.endTime);
+          }
+        } else {
+          // No time specified (Quick Date Select) - use original date without timezone conversion
+          // console.log('🔍 Using endDate without timezone conversion (Quick Date Select):', filterParams.endDate);
+          params.set('endDate', filterParams.endDate);
+        }
+      }
       if (filterParams?.operationFilter) {
         params.set('operationFilter', filterParams.operationFilter);
-        console.log('🔍 Sending operationFilter to API:', filterParams.operationFilter);
+        // console.log('🔍 Sending operationFilter to API:', filterParams.operationFilter);
       }
       if (filterParams?.namespaceFilter) params.set('namespaceFilter', filterParams.namespaceFilter);
       if (filterParams?.excludeSystemNamespaces) params.set('excludeSystemNamespaces', 'true');
       if (filterParams?.inMemorySortsFilter) params.set('inMemorySortsFilter', 'true');
       if (filterParams?.fromMultiPlannerFilter) params.set('fromMultiPlannerFilter', 'true');
       
-      console.log('📡 Query Performance API URL:', `/api/query-performance?${params.toString()}`);
+      // console.log('📡 Final Query Performance API URL:', `/api/query-performance?${params.toString()}`);
+      // console.log('📡 All URL parameters being sent:', Object.fromEntries(params.entries()));
       
       const response = await fetch(`/api/query-performance?${params.toString()}`, {
         headers: {
@@ -244,14 +323,14 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
       const data = await response.json();
       
       if (data.success) {
-        console.log('📊 Setting query performance data');
-        console.log('Query performance data received:', data.queryPerformance);
-        console.log('Slow queries:', data.queryPerformance.slowQueries?.length || 0);
+        // console.log('📊 Setting query performance data');
+        // console.log('Query performance data received:', data.queryPerformance);
+        // console.log('Slow queries:', data.queryPerformance.slowQueries?.length || 0);
         console.log('Filter metadata:', data.metadata?.filterApplied);
         
         // Set filtered queries directly from server response
         if (data.queryPerformance.slowQueries) {
-          console.log('📊 Setting filtered queries from query performance API');
+          // console.log('📊 Setting filtered queries from query performance API');
           setFilteredQueries(data.queryPerformance.slowQueries);
           
           // Store original unfiltered queries on first load (no specific filters applied)
@@ -261,7 +340,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                                     filterParams?.excludeSystemNamespaces;
           
           if (!hasSpecificFilters && originalSlowQueries.length === 0) {
-            console.log('📊 Storing original unfiltered queries for dropdown population');
+            // console.log('📊 Storing original unfiltered queries for dropdown population');
             setOriginalSlowQueries(data.queryPerformance.slowQueries);
           }
           
@@ -288,8 +367,8 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
               slowQueries: data.queryPerformance.slowQueries
             };
           });
-          console.log('📊 Updated analytics.slowQueries for Timeline Analysis with filtered data');
-          console.log('📊 New analytics.slowQueries length:', data.queryPerformance.slowQueries.length);
+          // console.log('📊 Updated analytics.slowQueries for Timeline Analysis with filtered data');
+          // console.log('📊 New analytics.slowQueries length:', data.queryPerformance.slowQueries.length);
         }
         
         setError(null);
@@ -398,7 +477,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
 
   // Handle date selection from dropdown
   const handleDateSelection = (selectedDate: string) => {
-    console.log('📅 Date selected from dropdown:', selectedDate);
+    // console.log('📅 Date selected from dropdown:', selectedDate);
     // Set both start and end date to the selected date for a single day filter
     setStartDate(selectedDate);
     setEndDate(selectedDate);
@@ -412,7 +491,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
 
   // Handle reset functionality
   const handleResetFilters = () => {
-    console.log('🔄 Resetting all filters');
+    // console.log('🔄 Resetting all filters');
     // Reset date filters
     setStartDate('');
     setEndDate('');
@@ -432,30 +511,28 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
   // Trigger query performance refetch when filter values change (with debouncing)
   // Static analytics remain unchanged - only query performance graphs update
   useEffect(() => {
-    console.log('🔄 Filter change detected, scheduling Query Performance refetch');
-    
-    // Skip initial load (no dates set yet)
-    if (!startDate || !endDate) {
-      console.log('🔄 No date range set yet, skipping refetch');
-      return;
-    }
+    // console.log('🔄 Filter change detected, scheduling Query Performance refetch');
+    // console.log('🔄 Current filter values:', { startDate, endDate, startTime, endTime, operationFilter, namespaceFilter });
     
     // Debounce API calls to avoid too many requests
     const timeoutId = setTimeout(() => {
-      console.log('🔄 Executing debounced Query Performance refetch with current filters');
-      console.log('🔄 Static analytics (connection stats, auth events, etc.) remain unchanged');
+      // console.log('🔄 Executing debounced Query Performance refetch with current filters');
+      // console.log('🔄 Static analytics (connection stats, auth events, etc.) remain unchanged');
       
       const filterParams = {
-        startDate: startDate || undefined,
-        endDate: endDate || undefined,
-        startTime: startTime || undefined,
-        endTime: endTime || undefined,
+        // Only include dates if they have actual values (not empty strings)
+        startDate: startDate && startDate.trim() ? startDate : undefined,
+        endDate: endDate && endDate.trim() ? endDate : undefined,
+        startTime: startTime && startTime.trim() ? startTime : undefined,
+        endTime: endTime && endTime.trim() ? endTime : undefined,
         operationFilter: operationFilter || undefined,
         namespaceFilter: namespaceFilter || undefined,
         excludeSystemNamespaces: excludeSystemNamespaces || undefined,
         inMemorySortsFilter: inMemorySortsFilter || undefined,
         fromMultiPlannerFilter: fromMultiPlannerFilter || undefined,
       };
+      
+      // console.log('🔄 Calling fetchQueryPerformance with filterParams:', filterParams);
       
       // Only fetch query performance - static analytics stay the same
       fetchQueryPerformance(filterParams);
@@ -538,43 +615,43 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
 
   // Function to analyze queries running at a specific timestamp
   const analyzeQueriesAtTimestamp = useCallback((timestamp: string) => {
-    console.log('🔍 Analyzing queries at timestamp:', timestamp);
+    // console.log('🔍 Analyzing queries at timestamp:', timestamp);
     if (!analytics?.slowQueries || !timestamp) {
-      console.log('❌ No analytics data or timestamp provided', {
-        hasAnalytics: !!analytics,
-        hasSlowQueries: !!analytics?.slowQueries,
-        slowQueriesLength: analytics?.slowQueries?.length || 0,
-        timestamp: timestamp
-      });
+      // console.log('❌ No analytics data or timestamp provided', {
+      //   hasAnalytics: !!analytics,
+      //   hasSlowQueries: !!analytics?.slowQueries,
+      //   slowQueriesLength: analytics?.slowQueries?.length || 0,
+      //   timestamp: timestamp
+      // });
       setTimelineQueries([]);
       setShowTimelineAnalysis(false);
       return;
     }
 
     const targetTime = new Date(timestamp).getTime();
-    console.log('🎯 Target time:', targetTime, 'from timestamp:', timestamp);
-    console.log('📊 Total slow queries available for timeline analysis:', analytics.slowQueries.length);
-    console.log('📊 Data source: analytics.slowQueries (updated by query performance API)');
+    // console.log('🎯 Target time:', targetTime, 'from timestamp:', timestamp);
+    // console.log('📊 Total slow queries available for timeline analysis:', analytics.slowQueries.length);
+    // console.log('📊 Data source: analytics.slowQueries (updated by query performance API)');
     
     // Note: filteredQueries comparison removed to avoid variable hoisting issues
     
     // Debug: Check sample query structure and timestamp formats
     if (analytics.slowQueries.length > 0) {
       const sampleQuery = analytics.slowQueries[0];
-      console.log('📋 Sample query structure:', {
-        hasQueryStartTime: !!sampleQuery.queryStartTime,
-        hasQueryEndTime: !!sampleQuery.queryEndTime,
-        hasLogTimestamp: !!sampleQuery.logTimestamp,
-        queryStartTimeType: typeof sampleQuery.queryStartTime,
-        queryEndTimeType: typeof sampleQuery.queryEndTime,
-        logTimestampType: typeof sampleQuery.logTimestamp,
-        queryStartTimeValue: sampleQuery.queryStartTime,
-        queryEndTimeValue: sampleQuery.queryEndTime,
-        logTimestampValue: sampleQuery.logTimestamp,
-        durationMillis: sampleQuery.durationMillis,
-        duration: sampleQuery.duration,
-        namespace: sampleQuery.namespace
-      });
+      // console.log('📋 Sample query structure:', {
+      //   hasQueryStartTime: !!sampleQuery.queryStartTime,
+      //   hasQueryEndTime: !!sampleQuery.queryEndTime,
+      //   hasLogTimestamp: !!sampleQuery.logTimestamp,
+      //   queryStartTimeType: typeof sampleQuery.queryStartTime,
+      //   queryEndTimeType: typeof sampleQuery.queryEndTime,
+      //   logTimestampType: typeof sampleQuery.logTimestamp,
+      //   queryStartTimeValue: sampleQuery.queryStartTime,
+      //   queryEndTimeValue: sampleQuery.queryEndTime,
+      //   logTimestampValue: sampleQuery.logTimestamp,
+      //   durationMillis: sampleQuery.durationMillis,
+      //   duration: sampleQuery.duration,
+      //   namespace: sampleQuery.namespace
+      // });
 
       // Parse timestamps to see if there are conversion issues
       if (sampleQuery.queryStartTime) {
@@ -586,7 +663,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
         } else {
           parsedStartTime = new Date(sampleQuery.queryStartTime).getTime();
         }
-        console.log('🕰️ Parsed queryStartTime:', parsedStartTime, 'as ISO:', new Date(parsedStartTime).toISOString());
+        // console.log('🕰️ Parsed queryStartTime:', parsedStartTime, 'as ISO:', new Date(parsedStartTime).toISOString());
       }
 
       if (sampleQuery.queryEndTime) {
@@ -598,7 +675,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
         } else {
           parsedEndTime = new Date(sampleQuery.queryEndTime).getTime();
         }
-        console.log('🕰️ Parsed queryEndTime:', parsedEndTime, 'as ISO:', new Date(parsedEndTime).toISOString());
+        // console.log('🕰️ Parsed queryEndTime:', parsedEndTime, 'as ISO:', new Date(parsedEndTime).toISOString());
       }
     }
     
@@ -607,23 +684,23 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
       const isDebugQuery = index < 3;
       
       if (isDebugQuery) {
-        console.log(`🔍 Processing query ${index + 1}:`, {
-          namespace: query.namespace,
-          hasQueryStartTime: !!query.queryStartTime,
-          hasQueryEndTime: !!query.queryEndTime,
-          hasLogTimestamp: !!query.logTimestamp,
-          queryStartTimeRaw: query.queryStartTime,
-          queryEndTimeRaw: query.queryEndTime,
-          logTimestampRaw: query.logTimestamp,
-          duration: query.durationMillis || query.duration
-        });
+        // console.log(`🔍 Processing query ${index + 1}:`, {
+        //   namespace: query.namespace,
+        //   hasQueryStartTime: !!query.queryStartTime,
+        //   hasQueryEndTime: !!query.queryEndTime,
+        //   hasLogTimestamp: !!query.logTimestamp,
+        //   queryStartTimeRaw: query.queryStartTime,
+        //   queryEndTimeRaw: query.queryEndTime,
+        //   logTimestampRaw: query.logTimestamp,
+        //   duration: query.durationMillis || query.duration
+        // });
       }
 
       // Check if query has both start and end times
       if (!query.queryStartTime || !query.queryEndTime) {
         // Try alternative timestamp fields if primary ones don't exist
         if (!query.logTimestamp) {
-          if (isDebugQuery) console.log(`❌ Query ${index + 1}: No usable timestamp data`);
+          // if (isDebugQuery) console.log(`❌ Query ${index + 1}: No usable timestamp data`);
           return false;
         }
         // If we only have logTimestamp, assume the query was running at that time
@@ -634,7 +711,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
       if (query.namespace) {
         const dbName = query.namespace.split('.')[0];
         if (['local', 'admin', 'config'].includes(dbName)) {
-          if (isDebugQuery) console.log(`❌ Query ${index + 1}: Filtered out system database: ${dbName}`);
+          // if (isDebugQuery) console.log(`❌ Query ${index + 1}: Filtered out system database: ${dbName}`);
           return false;
         }
       }
@@ -681,41 +758,41 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
           startTime = logTime - duration;
           endTime = logTime;
         } else {
-          if (isDebugQuery) console.log(`❌ Query ${index + 1}: No usable timestamp data after parsing`);
+          // if (isDebugQuery) console.log(`❌ Query ${index + 1}: No usable timestamp data after parsing`);
           return false; // No usable timestamp data
         }
 
-        if (isDebugQuery) {
-          console.log(`🕰️ Query ${index + 1} parsed timestamps:`, {
-            startTimeMs: startTime,
-            endTimeMs: endTime,
-            startTimeISO: new Date(startTime).toISOString(),
-            endTimeISO: new Date(endTime).toISOString(),
-            targetTimeMs: targetTime,
-            targetTimeISO: new Date(targetTime).toISOString(),
-            queryDuration: endTime - startTime,
-            targetInRange: `${targetTime} >= ${startTime} && ${targetTime} <= ${endTime}`,
-            willMatch: targetTime >= startTime && targetTime <= endTime
-          });
-        }
+        // if (isDebugQuery) {
+        //   console.log(`🕰️ Query ${index + 1} parsed timestamps:`, {
+        //     startTimeMs: startTime,
+        //     endTimeMs: endTime,
+        //     startTimeISO: new Date(startTime).toISOString(),
+        //     endTimeISO: new Date(endTime).toISOString(),
+        //     targetTimeMs: targetTime,
+        //     targetTimeISO: new Date(targetTime).toISOString(),
+        //     queryDuration: endTime - startTime,
+        //     targetInRange: `${targetTime} >= ${startTime} && ${targetTime} <= ${endTime}`,
+        //     willMatch: targetTime >= startTime && targetTime <= endTime
+        //   });
+        // }
         
         // Check if target timestamp falls within query execution period
         const isRunning = targetTime >= startTime && targetTime <= endTime;
         
         if (isRunning) {
-          console.log('✅ Query was running:', {
-            namespace: query.namespace,
-            startTime: new Date(startTime).toISOString(),
-            endTime: new Date(endTime).toISOString(),
-            targetTime: new Date(targetTime).toISOString(),
-            duration: query.durationMillis || query.duration,
-            queryIndex: index + 1
-          });
+          // console.log('✅ Query was running:', {
+          //   namespace: query.namespace,
+          //   startTime: new Date(startTime).toISOString(),
+          //   endTime: new Date(endTime).toISOString(),
+          //   targetTime: new Date(targetTime).toISOString(),
+          //   duration: query.durationMillis || query.duration,
+          //   queryIndex: index + 1
+          // });
         }
         
         return isRunning;
       } catch (e) {
-        console.warn('Error parsing timestamps for query:', query, e);
+        // console.warn('Error parsing timestamps for query:', query, e);
         return false;
       }
     });
@@ -766,20 +843,20 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
         timelineIndex: index
       }));
 
-    console.log('✅ Timeline Analysis Results:', {
-      totalSlowQueries: analytics.slowQueries.length,
-      queriesRunningAtTime: runningQueries.length,
-      afterFiltering: filteredQueries.length,
-      finalSortedQueries: sortedQueries.length,
-      timestamp: timestamp,
-      filters: {
-        operation: timelineOperationFilter,
-        inMemorySorts: timelineInMemorySortsFilter,
-        fromMultiPlanner: timelineFromMultiPlannerFilter,
-        excludeErrored: timelineExcludeErroredFilter,
-        excludeSystemNamespaces: excludeSystemNamespaces
-      }
-    });
+    // console.log('✅ Timeline Analysis Results:', {
+    //   totalSlowQueries: analytics.slowQueries.length,
+    //   queriesRunningAtTime: runningQueries.length,
+    //   afterFiltering: filteredQueries.length,
+    //   finalSortedQueries: sortedQueries.length,
+    //   timestamp: timestamp,
+    //   filters: {
+    //     operation: timelineOperationFilter,
+    //     inMemorySorts: timelineInMemorySortsFilter,
+    //     fromMultiPlanner: timelineFromMultiPlannerFilter,
+    //     excludeErrored: timelineExcludeErroredFilter,
+    //     excludeSystemNamespaces: excludeSystemNamespaces
+    //   }
+    // });
     
     setTimelineQueries(sortedQueries);
     setShowTimelineAnalysis(true);
@@ -788,7 +865,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
   // Auto-analyze when timestamp changes
   useEffect(() => {
     if (selectedTimestamp && analytics?.slowQueries) {
-      console.log('🔄 Auto-analyzing timeline due to timestamp change:', selectedTimestamp);
+      // console.log('🔄 Auto-analyzing timeline due to timestamp change:', selectedTimestamp);
       analyzeQueriesAtTimestamp(selectedTimestamp);
     }
   }, [selectedTimestamp, analyzeQueriesAtTimestamp]);
@@ -1017,25 +1094,25 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
 
 
   // Debug information (only show in development)
-  console.log('🔍 AnalyticsDashboard Debug Info:', {
-    hasAnalytics: !!analytics,
-    slowQueriesCount: analytics?.slowQueries?.length || 0,
-    selectedTimestamp,
-    timelineQueriesCount: timelineQueries.length,
-    operationFilterValue: operationFilter,
-    namespaceFilterValue: namespaceFilter,
-    loading,
-    queryPerformanceLoading
-  });
+  // console.log('🔍 AnalyticsDashboard Debug Info:', {
+  //   hasAnalytics: !!analytics,
+  //   slowQueriesCount: analytics?.slowQueries?.length || 0,
+  //   selectedTimestamp,
+  //   timelineQueriesCount: timelineQueries.length,
+  //   operationFilterValue: operationFilter,
+  //   namespaceFilterValue: namespaceFilter,
+  //   loading,
+  //   queryPerformanceLoading
+  // });
   
-  if (analytics?.slowQueries?.length > 0) {
-    console.log('🔍 First slow query sample:', analytics.slowQueries[0]);
-  }
+  // if (analytics?.slowQueries?.length > 0) {
+  //   console.log('🔍 First slow query sample:', analytics.slowQueries[0]);
+  // }
 
   return (
     <div className="w-full space-y-4 lg:space-y-6 text-left">
-      {/* Debug Info Panel */}
-      {process.env.NODE_ENV === 'development' && analytics && (
+      {/* Debug Info Panel - Hidden */}
+      {false && process.env.NODE_ENV === 'development' && analytics && (
         <div className="bg-green-50 border border-green-300 rounded-lg p-4 text-sm">
           <h4 className="font-semibold text-green-800 mb-2">🔍 Debug Information</h4>
           <div className="text-green-700 space-y-1">
@@ -1255,30 +1332,30 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                     const dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
                     
                     if (!dataSource || dataSource.length === 0) {
-                      console.log('🔍 No data available for Operation dropdown');
+                      // console.log('🔍 No data available for Operation dropdown');
                       return null;
                     }
                     
-                    console.log(`🔍 Operation dropdown using ${useOriginal ? 'original unfiltered' : 'current analytics'} data (${dataSource.length} queries)`);
+                    // console.log(`🔍 Operation dropdown using ${useOriginal ? 'original unfiltered' : 'current analytics'} data (${dataSource.length} queries)`);
                     
                     const operations = Array.from(new Set(
                       dataSource.map((query: any) => {
                         const op = getOperationType(query);
                         // Reduced logging to avoid spam - only log if no operation found
                         if (!op) {
-                          console.log('🔍 Query with no operation extracted:', { 
-                            hasOperation: !!query.operation,
-                            hasCommand: !!query.command,
-                            operation: query.operation,
-                            command: query.command,
-                            extractedOp: op 
-                          });
+                          // console.log('🔍 Query with no operation extracted:', { 
+                          //   hasOperation: !!query.operation,
+                          //   hasCommand: !!query.command,
+                          //   operation: query.operation,
+                          //   command: query.command,
+                          //   extractedOp: op
+                          // });
                         }
                         return op;
                       }).filter((op): op is string => Boolean(op))
                     )).sort();
                     
-                    console.log('🔍 Unique operations found for dropdown:', operations);
+                    // console.log('🔍 Unique operations found for dropdown:', operations);
                     
                     return operations.map((op: string) => (
                       <option key={op} value={op}>{op}</option>
@@ -1302,11 +1379,11 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                     const dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
                     
                     if (!dataSource || dataSource.length === 0) {
-                      console.log('🔍 No data available for Namespace dropdown');
+                      // console.log('🔍 No data available for Namespace dropdown');
                       return null;
                     }
                     
-                    console.log(`🔍 Namespace dropdown using ${useOriginal ? 'original unfiltered' : 'current analytics'} data (${dataSource.length} queries)`);
+                    // console.log(`🔍 Namespace dropdown using ${useOriginal ? 'original unfiltered' : 'current analytics'} data (${dataSource.length} queries)`);
                     
                     const namespaces = Array.from(new Set(
                       dataSource.map((query: any) => {
@@ -1315,7 +1392,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                       }).filter(Boolean)
                     )).sort();
                     
-                    console.log('🔍 Unique namespaces found for dropdown:', namespaces);
+                    // console.log('🔍 Unique namespaces found for dropdown:', namespaces);
                     
                     return namespaces.map((ns) => (
                       <option key={ns} value={ns}>{ns}</option>

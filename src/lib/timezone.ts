@@ -197,31 +197,59 @@ export function loadTimezonePreference(): string {
 export function convertTimezoneToUTC(dateString: string, timeString?: string, timezone: string = DEFAULT_TIMEZONE): Date {
   try {
     const timeStr = timeString || '00:00';
-    const combinedString = `${dateString}T${timeStr}:00`;
+    console.log('🌍 convertTimezoneToUTC input:', { dateString, timeString: timeStr, timezone });
     
-    // Create date assuming it's in the user's timezone
-    const tempDate = new Date(combinedString + 'Z'); // Add Z to treat as UTC temporarily
+    // Create date parts
+    const [year, month, day] = dateString.split('-').map(Number);
+    const [hours, minutes, seconds = 0] = timeStr.split(':').map(Number);
     
-    // Use Intl to find the offset for the given timezone
-    const formatter = new Intl.DateTimeFormat('en', {
-      timeZone: timezone,
-      timeZoneName: 'longOffset'
-    });
+    console.log('🌍 Date parts:', { year, month, day, hours, minutes, seconds });
     
-    // Get the offset and convert to UTC
-    const offsetMatch = formatter.format(tempDate).match(/GMT([+-]\d{1,2}):?(\d{2})?/);
-    if (offsetMatch) {
-      const offsetHours = parseInt(offsetMatch[1]);
-      const offsetMinutes = parseInt(offsetMatch[2] || '0');
-      const totalOffsetMinutes = offsetHours * 60 + (offsetHours >= 0 ? offsetMinutes : -offsetMinutes);
-      
-      // Adjust the date by subtracting the offset to get UTC
-      return new Date(tempDate.getTime() - totalOffsetMinutes * 60 * 1000);
-    }
+    // Use a simpler, more reliable approach
+    // Create the date string in the user's timezone and let the browser handle conversion
+    const inputDateStr = `${dateString}T${timeStr}:00`;
+    console.log('🌍 Input date string:', inputDateStr);
     
-    return tempDate;
+    // Create a date in the user's specified timezone
+    // Use Intl.DateTimeFormat to handle the timezone conversion properly
+    const tempDate = new Date(`${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`);
+    console.log('🌍 Temp date (local interpretation):', tempDate.toISOString());
+    
+    // Get the actual UTC time by using the timezone offset
+    // This is a more direct approach using the Date constructor with timezone awareness
+    const utcMs = tempDate.getTime() - (tempDate.getTimezoneOffset() * 60 * 1000);
+    
+    // Now adjust for the target timezone
+    // Get the timezone offset for the target timezone at this specific date/time
+    const offsetMinutes = getTimezoneOffset(timezone, tempDate);
+    console.log('🌍 Target timezone offset (minutes):', offsetMinutes);
+    
+    // Convert: subtract the timezone offset to get UTC
+    const result = new Date(utcMs - (offsetMinutes * 60 * 1000));
+    console.log('🌍 Final UTC result:', result.toISOString());
+    
+    return result;
   } catch (error) {
-    console.warn('Error converting timezone to UTC:', error);
-    return new Date(dateString + 'T' + (timeString || '00:00') + ':00Z');
+    console.error('🌍 Error in convertTimezoneToUTC:', error);
+    // Simple fallback
+    const fallback = new Date(`${dateString}T${timeString || '00:00'}:00Z`);
+    console.log('🌍 Using fallback:', fallback.toISOString());
+    return fallback;
+  }
+}
+
+// Helper function to get timezone offset for a specific timezone and date
+function getTimezoneOffset(timezone: string, date: Date): number {
+  try {
+    // Create a date formatter for the timezone
+    const utcDate = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
+    const tzDate = new Date(date.toLocaleString('en-US', { timeZone: timezone }));
+    
+    // Calculate offset in minutes
+    const offsetMs = tzDate.getTime() - utcDate.getTime();
+    return offsetMs / (60 * 1000);
+  } catch (error) {
+    console.error('Error getting timezone offset:', error);
+    return 0; // Fallback to UTC
   }
 }
