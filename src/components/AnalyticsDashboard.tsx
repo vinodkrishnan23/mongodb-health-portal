@@ -26,6 +26,37 @@ interface AnalyticsDashboardProps {
   userEmail?: string;
 }
 
+// Interface for Query Hash Analysis
+interface QueryHashAnalysis {
+  queryHash: string;
+  namespace: string;
+  count: number;
+  avgDurationSeconds: number;
+  p90DurationSeconds: number;
+  p95DurationSeconds: number;
+  p99DurationSeconds: number;
+}
+
+// Interface for Query Hash Data Read Analysis  
+interface QueryHashDataAnalysis {
+  queryHash: string;
+  namespace: string;
+  count: number;
+  avgDataReadMB: number;
+  maxDataReadMB: number;
+  minDataReadMB: number;
+}
+
+// Interface for Query Hash Yields Analysis
+interface QueryHashYieldsAnalysis {
+  queryHash: string;
+  namespace: string;
+  count: number;
+  avgYields: number;
+  maxYields: number;
+  minYields: number;
+}
+
 export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsDashboardProps) {
   // Simple render counter for debugging
   const renderCount = useRef(0);
@@ -61,11 +92,19 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
   const [timeFilter, setTimeFilter] = useState<string>('');
   
   // Operation type and namespace filter states
-  const [operationFilter, setOperationFilter] = useState<string>('');
-  const [namespaceFilter, setNamespaceFilter] = useState<string>('');
+  const [operationFilter, setOperationFilter] = useState<string[]>([]);
+  const [namespaceFilter, setNamespaceFilter] = useState<string[]>([]);
+  const [namespaceSearchTerm, setNamespaceSearchTerm] = useState<string>('');
+  const [showNamespaceDropdown, setShowNamespaceDropdown] = useState<boolean>(false);
+  const [remoteIpFilter, setRemoteIpFilter] = useState<string[]>([]);
+  const [remoteIpSearchTerm, setRemoteIpSearchTerm] = useState<string>('');
+  const [showRemoteIpDropdown, setShowRemoteIpDropdown] = useState<boolean>(false);
+  const [operationSearchTerm, setOperationSearchTerm] = useState<string>('');
+  const [showOperationDropdown, setShowOperationDropdown] = useState<boolean>(false);
   const [inMemorySortsFilter, setInMemorySortsFilter] = useState<boolean>(false);
   const [fromMultiPlannerFilter, setFromMultiPlannerFilter] = useState<boolean>(false);
   const [excludeSystemNamespaces, setExcludeSystemNamespaces] = useState<boolean>(false);
+  const [collectionScansFilter, setCollectionScansFilter] = useState<boolean>(false);
   
   // Timeline analysis states
   const [selectedTimestamp, setSelectedTimestamp] = useState<string>('');
@@ -73,6 +112,9 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
   const [showTimelineAnalysis, setShowTimelineAnalysis] = useState(false);
   const [timelineSortMetric, setTimelineSortMetric] = useState<string>('duration');
   const [timelineOperationFilter, setTimelineOperationFilter] = useState<string>('');
+  const [timelineRemoteIpFilter, setTimelineRemoteIpFilter] = useState<string[]>([]);
+  const [timelineRemoteIpSearchTerm, setTimelineRemoteIpSearchTerm] = useState<string>('');
+  const [showTimelineRemoteIpDropdown, setShowTimelineRemoteIpDropdown] = useState<boolean>(false);
   const [timelineInMemorySortsFilter, setTimelineInMemorySortsFilter] = useState<boolean>(false);
   const [timelineFromMultiPlannerFilter, setTimelineFromMultiPlannerFilter] = useState<boolean>(false);
   const [timelineExcludeErroredFilter, setTimelineExcludeErroredFilter] = useState<boolean>(false);
@@ -101,6 +143,33 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
   
   // Original unfiltered queries for dropdown population
   const [originalSlowQueries, setOriginalSlowQueries] = useState<any[]>([]);
+
+  // Query Hash Analysis state
+  const [queryHashAnalysis, setQueryHashAnalysis] = useState<QueryHashAnalysis[]>([]);
+  const [queryHashSortField, setQueryHashSortField] = useState<keyof QueryHashAnalysis>('count');
+  const [queryHashSortDirection, setQueryHashSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [queryHashCurrentPage, setQueryHashCurrentPage] = useState(1);
+  const [queryHashItemsPerPage] = useState(20);
+
+  // Query Hash Data Analysis state
+  const [queryHashDataAnalysis, setQueryHashDataAnalysis] = useState<QueryHashDataAnalysis[]>([]);
+  const [queryHashDataSortField, setQueryHashDataSortField] = useState<keyof QueryHashDataAnalysis>('count');
+  const [queryHashDataSortDirection, setQueryHashDataSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [queryHashDataCurrentPage, setQueryHashDataCurrentPage] = useState(1);
+  const [queryHashDataItemsPerPage] = useState(20);
+
+  // Query Hash Yields Analysis state
+  const [queryHashYieldsAnalysis, setQueryHashYieldsAnalysis] = useState<QueryHashYieldsAnalysis[]>([]);
+  const [queryHashYieldsSortField, setQueryHashYieldsSortField] = useState<keyof QueryHashYieldsAnalysis>('count');
+  const [queryHashYieldsSortDirection, setQueryHashYieldsSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [queryHashYieldsCurrentPage, setQueryHashYieldsCurrentPage] = useState(1);
+  const [queryHashYieldsItemsPerPage] = useState(20);
+
+  // Query Hash Analysis Tab state
+  const [queryHashActiveTab, setQueryHashActiveTab] = useState<'duration' | 'dataRead' | 'yields'>('duration');
+
+  // App Analysis Tab state
+  const [appAnalysisActiveTab, setAppAnalysisActiveTab] = useState<'connections' | 'traffic'>('connections');
 
   // Stabilize slowQueries to prevent filtering useEffect from running constantly
   const slowQueries = useMemo(() => {
@@ -205,11 +274,13 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     endDate?: string;
     startTime?: string;
     endTime?: string;
-    operationFilter?: string;
-    namespaceFilter?: string;
+    operationFilter?: string[];
+    namespaceFilter?: string[];
+    remoteIpFilter?: string[];
     excludeSystemNamespaces?: boolean;
     inMemorySortsFilter?: boolean;
     fromMultiPlannerFilter?: boolean;
+    collectionScansFilter?: boolean;
   }) => {
     // console.log('📡 fetchQueryPerformance called with filters:', filterParams);
     try {
@@ -303,17 +374,28 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
           params.set('endDate', filterParams.endDate);
         }
       }
-      if (filterParams?.operationFilter) {
-        params.set('operationFilter', filterParams.operationFilter);
+      if (filterParams?.operationFilter && filterParams.operationFilter.length > 0) {
+        params.set('operationFilter', filterParams.operationFilter.join(','));
         // console.log('🔍 Sending operationFilter to API:', filterParams.operationFilter);
       }
-      if (filterParams?.namespaceFilter) params.set('namespaceFilter', filterParams.namespaceFilter);
+      if (filterParams?.namespaceFilter && filterParams.namespaceFilter.length > 0) {
+        params.set('namespaceFilter', filterParams.namespaceFilter.join(','));
+      }
+      if (filterParams?.remoteIpFilter && filterParams.remoteIpFilter.length > 0) {
+        params.set('remoteIpFilter', filterParams.remoteIpFilter.join(','));
+      }
       if (filterParams?.excludeSystemNamespaces) params.set('excludeSystemNamespaces', 'true');
       if (filterParams?.inMemorySortsFilter) params.set('inMemorySortsFilter', 'true');
       if (filterParams?.fromMultiPlannerFilter) params.set('fromMultiPlannerFilter', 'true');
+      if (filterParams?.collectionScansFilter) params.set('collectionScansFilter', 'true');
       
       // console.log('📡 Final Query Performance API URL:', `/api/query-performance?${params.toString()}`);
-      // console.log('📡 All URL parameters being sent:', Object.fromEntries(params.entries()));
+      console.log('📡 All URL parameters being sent:', Object.fromEntries(params.entries()));
+      console.log('🔍 Filter values:', {
+        namespaceFilter: filterParams?.namespaceFilter,
+        remoteIpFilter: filterParams?.remoteIpFilter,
+        operationFilter: filterParams?.operationFilter
+      });
       
       const response = await fetch(`/api/query-performance?${params.toString()}`, {
         headers: {
@@ -335,9 +417,11 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
           
           // Store original unfiltered queries on first load (no specific filters applied)
           // Note: We ignore date/time filters for dropdown population to show all possible values
-          const hasSpecificFilters = filterParams?.operationFilter || filterParams?.namespaceFilter || 
+          const hasSpecificFilters = (filterParams?.operationFilter && filterParams.operationFilter.length > 0) || 
+                                    (filterParams?.namespaceFilter && filterParams.namespaceFilter.length > 0) || 
+                                    (filterParams?.remoteIpFilter && filterParams.remoteIpFilter.length > 0) || 
                                     filterParams?.inMemorySortsFilter || filterParams?.fromMultiPlannerFilter || 
-                                    filterParams?.excludeSystemNamespaces;
+                                    filterParams?.excludeSystemNamespaces || filterParams?.collectionScansFilter;
           
           if (!hasSpecificFilters && originalSlowQueries.length === 0) {
             // console.log('📊 Storing original unfiltered queries for dropdown population');
@@ -501,11 +585,21 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     setSelectedQuickDate('');
     setShowManualDateFilters(true);
     // Reset other filters
-    setOperationFilter('');
-    setNamespaceFilter('');
+    setOperationFilter([]);
+    setNamespaceFilter([]);
+    setNamespaceSearchTerm('');
+    setRemoteIpFilter([]);
+    setRemoteIpSearchTerm('');
+    setOperationSearchTerm('');
+    setShowNamespaceDropdown(false);
+    setShowRemoteIpDropdown(false);
+    setShowOperationDropdown(false);
     setInMemorySortsFilter(false);
     setFromMultiPlannerFilter(false);
     setExcludeSystemNamespaces(false);
+    setCollectionScansFilter(false);
+    
+    console.log('🧹 All filters cleared');
   };
 
   // Trigger query performance refetch when filter values change (with debouncing)
@@ -525,11 +619,13 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
         endDate: endDate && endDate.trim() ? endDate : undefined,
         startTime: startTime && startTime.trim() ? startTime : undefined,
         endTime: endTime && endTime.trim() ? endTime : undefined,
-        operationFilter: operationFilter || undefined,
-        namespaceFilter: namespaceFilter || undefined,
+        operationFilter: operationFilter.length > 0 ? operationFilter : undefined,
+        namespaceFilter: namespaceFilter.length > 0 ? namespaceFilter : undefined,
+        remoteIpFilter: remoteIpFilter.length > 0 ? remoteIpFilter : undefined,
         excludeSystemNamespaces: excludeSystemNamespaces || undefined,
         inMemorySortsFilter: inMemorySortsFilter || undefined,
         fromMultiPlannerFilter: fromMultiPlannerFilter || undefined,
+        collectionScansFilter: collectionScansFilter || undefined,
       };
       
       // console.log('🔄 Calling fetchQueryPerformance with filterParams:', filterParams);
@@ -539,7 +635,212 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     }, 500); // 500ms debounce
     
     return () => clearTimeout(timeoutId);
-  }, [startDate, endDate, startTime, endTime, operationFilter, namespaceFilter, inMemorySortsFilter, fromMultiPlannerFilter, excludeSystemNamespaces]);
+  }, [startDate, endDate, startTime, endTime, operationFilter, namespaceFilter, remoteIpFilter, inMemorySortsFilter, fromMultiPlannerFilter, excludeSystemNamespaces, collectionScansFilter]);
+
+  // Handle click outside to close dropdowns
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Element;
+      
+      // Check if click is inside any dropdown
+      const isInsideNamespaceDropdown = target.closest('[data-dropdown="namespace"]');
+      const isInsideRemoteIpDropdown = target.closest('[data-dropdown="remoteip"]');
+      const isInsideOperationDropdown = target.closest('[data-dropdown="operation"]');
+      const isInsideTimelineRemoteIpDropdown = target.closest('[data-dropdown="timeline-remoteip"]');
+      
+      if (!isInsideNamespaceDropdown && showNamespaceDropdown) {
+        setShowNamespaceDropdown(false);
+      }
+      if (!isInsideRemoteIpDropdown && showRemoteIpDropdown) {
+        setShowRemoteIpDropdown(false);
+      }
+      if (!isInsideOperationDropdown && showOperationDropdown) {
+        setShowOperationDropdown(false);
+      }
+      if (!isInsideTimelineRemoteIpDropdown && showTimelineRemoteIpDropdown) {
+        setShowTimelineRemoteIpDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showNamespaceDropdown, showRemoteIpDropdown, showOperationDropdown, showTimelineRemoteIpDropdown]);
+
+  // Helper function to get filtered data source based on all current filters
+  const getFilteredDataSource = useCallback((excludeFilters: string[] = []) => {
+    const useOriginal = originalSlowQueries.length > 0;
+    let dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
+    
+    if (!dataSource || dataSource.length === 0) {
+      console.log('🔍 getFilteredDataSource: No data source available');
+      return [];
+    }
+
+    console.log(`🔍 getFilteredDataSource: Starting with ${dataSource.length} queries, excluding filters:`, excludeFilters);
+
+    // NOTE: Checkbox filters (excludeSystemNamespaces, inMemorySortsFilter, fromMultiPlannerFilter, collectionScansFilter) 
+    // are already applied at the API level in the MongoDB query, so we don't need to apply them again here.
+    // This function only handles dropdown filters for interconnected filtering.
+
+    // Apply dropdown filters
+    if (!excludeFilters.includes('namespaceFilter') && namespaceFilter.length > 0) {
+      dataSource = dataSource.filter((query: any) => {
+        const namespace = query.namespace || query.attr?.ns;
+        return namespace && namespaceFilter.includes(namespace);
+      });
+    }
+
+    if (!excludeFilters.includes('remoteIpFilter') && remoteIpFilter.length > 0) {
+      dataSource = dataSource.filter((query: any) => {
+        const remoteIP = query.remoteIP || query.attr?.remote;
+        if (!remoteIP) return false;
+        const cleanIP = remoteIP.includes(':') ? remoteIP.split(':')[0] : remoteIP;
+        return remoteIpFilter.includes(cleanIP);
+      });
+    }
+
+    if (!excludeFilters.includes('operationFilter') && operationFilter.length > 0) {
+      dataSource = dataSource.filter((query: any) => {
+        // Use the same operation type derivation logic as in the API
+        const getOperationType = (query: any) => {
+          if (query.command) {
+            return Object.keys(query.command)[0] || 'unknown';
+          }
+          if (query.operation) {
+            return query.operation;
+          }
+          if (query.msg && query.msg.includes('Slow query')) {
+            return 'query';
+          }
+          if (query.errCode) {
+            return 'error';
+          }
+          return 'unknown';
+        };
+        
+        const operationType = getOperationType(query);
+        return operationFilter.includes(operationType);
+      });
+    }
+
+    console.log(`🔍 getFilteredDataSource: Final result ${dataSource.length} queries`);
+    return dataSource;
+  }, [originalSlowQueries, analytics?.slowQueries, namespaceFilter, remoteIpFilter, operationFilter]);
+
+  // Handle interconnected filters - comprehensive system
+  // Clean up incompatible selections when any filter changes (with debounce)
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      const cleanupIncompatibleSelections = () => {
+        console.log('🔄 Running filter cleanup with current state:', {
+          namespaceFilter: namespaceFilter.length,
+          remoteIpFilter: remoteIpFilter.length,
+          operationFilter: operationFilter.length
+        });
+        let hasChanges = false;
+
+      // Clean up remote IP selections based on other filters
+      if (remoteIpFilter.length > 0) {
+        const validDataForIps = getFilteredDataSource(['remoteIpFilter']);
+        console.log('🔍 Valid data for IPs check:', validDataForIps.length, 'queries');
+        const validIps = Array.from(new Set(
+          validDataForIps
+            .map((query: any) => query.remoteIP || query.attr?.remote)
+            .filter((ip): ip is string => Boolean(ip) && typeof ip === 'string')
+            .map((ip: string) => ip.includes(':') ? ip.split(':')[0] : ip)
+            .filter((ip): ip is string => Boolean(ip) && ip !== 'Unknown')
+        ));
+        
+        console.log('🔍 Valid IPs found:', validIps.length, validIps.slice(0, 3));
+        console.log('🔍 Current selected IPs:', remoteIpFilter);
+        
+        const validSelectedIps = remoteIpFilter.filter(ip => validIps.includes(ip));
+        if (validSelectedIps.length !== remoteIpFilter.length) {
+          console.log('🔄 About to clean up IP selections. Valid:', validSelectedIps, 'Invalid:', remoteIpFilter.filter(ip => !validIps.includes(ip)));
+          setRemoteIpFilter(validSelectedIps);
+          hasChanges = true;
+        }
+      }
+
+      // Clean up namespace selections based on other filters
+      if (namespaceFilter.length > 0) {
+        const validDataForNamespaces = getFilteredDataSource(['namespaceFilter']);
+        const validNamespaces = Array.from(new Set(
+          validDataForNamespaces
+            .map((query: any) => query.namespace || query.attr?.ns)
+            .filter(Boolean)
+        ));
+        
+        const validSelectedNamespaces = namespaceFilter.filter(ns => validNamespaces.includes(ns));
+        if (validSelectedNamespaces.length !== namespaceFilter.length) {
+          setNamespaceFilter(validSelectedNamespaces);
+          console.log('🔄 Cleaned up incompatible namespace selections:', namespaceFilter.filter(ns => !validNamespaces.includes(ns)));
+          hasChanges = true;
+        }
+      }
+
+      // Clean up operation selections based on other filters
+      if (operationFilter.length > 0) {
+        const validDataForOperations = getFilteredDataSource(['operationFilter']);
+        const validOperations = Array.from(new Set(
+          validDataForOperations.map((query: any) => {
+            // Use the same operation type derivation logic
+            if (query.command) {
+              return Object.keys(query.command)[0] || 'unknown';
+            }
+            if (query.operation) {
+              return query.operation;
+            }
+            if (query.msg && query.msg.includes('Slow query')) {
+              return 'query';
+            }
+            if (query.errCode) {
+              return 'error';
+            }
+            return 'unknown';
+          }).filter(Boolean)
+        ));
+        
+        const validSelectedOperations = operationFilter.filter(op => validOperations.includes(op));
+        if (validSelectedOperations.length !== operationFilter.length) {
+          setOperationFilter(validSelectedOperations);
+          console.log('🔄 Cleaned up incompatible operation selections:', operationFilter.filter(op => !validOperations.includes(op)));
+          hasChanges = true;
+        }
+      }
+
+      if (hasChanges) {
+        console.log('🔄 Filter cleanup completed');
+      }
+    };
+
+    // Only run cleanup if we have data and at least one dropdown filter is active
+    const hasActiveDropdownFilters = namespaceFilter.length > 0 || remoteIpFilter.length > 0 || operationFilter.length > 0;
+    const hasData = (originalSlowQueries.length > 0) || (analytics?.slowQueries && analytics.slowQueries.length > 0);
+    
+    console.log('🔍 Cleanup conditions:', {
+      hasActiveDropdownFilters,
+      hasData,
+      loading,
+      originalSlowQueriesLength: originalSlowQueries.length,
+      analyticsSlowQueriesLength: analytics?.slowQueries?.length || 0
+    });
+    
+      // TEMPORARILY DISABLED: Cleanup might be causing filter resets
+      // TODO: Implement more targeted cleanup that doesn't interfere with user interactions
+      console.log('🔍 Cleanup temporarily disabled to prevent filter resets');
+      
+      // if (hasActiveDropdownFilters && hasData && !loading) {
+      //   cleanupIncompatibleSelections();
+      // } else {
+      //   console.log('🔍 Skipping cleanup - conditions not met');
+      // }
+    }, 300); // 300ms debounce
+    
+    return () => clearTimeout(timeoutId);
+  }, [namespaceFilter, remoteIpFilter, operationFilter, loading]);
 
   // Handle viewport width changes and scrolling boundaries
   useEffect(() => {
@@ -806,6 +1107,17 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
       });
     }
 
+    // Apply Timeline Remote IP filter if selected
+    if (timelineRemoteIpFilter.length > 0) {
+      filteredQueries = filteredQueries.filter((query: any) => {
+        const remoteIP = query.remoteIP || query.attr?.remote;
+        if (!remoteIP) return false;
+        // Remove port number if present and compare
+        const cleanIP = remoteIP.includes(':') ? remoteIP.split(':')[0] : remoteIP;
+        return timelineRemoteIpFilter.includes(cleanIP);
+      });
+    }
+
     // Apply Timeline InMemorySorts filter if selected
     if (timelineInMemorySortsFilter) {
       filteredQueries = filteredQueries.filter((query: any) => query.hasSortStage === true);
@@ -860,7 +1172,402 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     
     setTimelineQueries(sortedQueries);
     setShowTimelineAnalysis(true);
-  }, [analytics?.slowQueries, timelineOperationFilter, timelineInMemorySortsFilter, timelineFromMultiPlannerFilter, timelineExcludeErroredFilter, excludeSystemNamespaces, timelineSortMetric]);
+  }, [analytics?.slowQueries, timelineOperationFilter, timelineRemoteIpFilter, timelineInMemorySortsFilter, timelineFromMultiPlannerFilter, timelineExcludeErroredFilter, excludeSystemNamespaces, timelineSortMetric]);
+
+  // Process Query Hash Analysis
+  const processQueryHashAnalysis = useCallback((queries: any[]): QueryHashAnalysis[] => {
+    if (!queries || queries.length === 0) return [];
+
+    // Group queries by queryHash
+    const groupedQueries: { [queryHash: string]: any[] } = {};
+    
+    queries.forEach(query => {
+      if (!query.queryHash) return; // Skip queries without queryHash
+      
+      if (!groupedQueries[query.queryHash]) {
+        groupedQueries[query.queryHash] = [];
+      }
+      groupedQueries[query.queryHash].push(query);
+    });
+
+    // Calculate statistics for each query hash
+    const analysis: QueryHashAnalysis[] = Object.entries(groupedQueries).map(([queryHash, queriesForHash]) => {
+      // Extract namespace from the first query in the group
+      const namespace = queriesForHash[0]?.namespace || queriesForHash[0]?.attr?.ns || 'N/A';
+      
+      // Extract durations in milliseconds
+      const durations = queriesForHash
+        .map(q => q.durationMillis || q.duration || 0)
+        .filter(d => d > 0) // Filter out zero durations
+        .sort((a, b) => a - b); // Sort for percentile calculations
+
+      if (durations.length === 0) {
+        return {
+          queryHash,
+          namespace,
+          count: queriesForHash.length,
+          avgDurationSeconds: 0,
+          p90DurationSeconds: 0,
+          p95DurationSeconds: 0,
+          p99DurationSeconds: 0
+        };
+      }
+
+      // Calculate average
+      const avg = durations.reduce((sum, d) => sum + d, 0) / durations.length;
+
+      // Calculate percentiles
+      const getPercentile = (percentile: number) => {
+        const index = Math.ceil((percentile / 100) * durations.length) - 1;
+        return durations[Math.max(0, Math.min(index, durations.length - 1))];
+      };
+
+      return {
+        queryHash,
+        namespace,
+        count: queriesForHash.length,
+        avgDurationSeconds: parseFloat((avg / 1000).toFixed(3)), // Convert to seconds
+        p90DurationSeconds: parseFloat((getPercentile(90) / 1000).toFixed(3)),
+        p95DurationSeconds: parseFloat((getPercentile(95) / 1000).toFixed(3)),
+        p99DurationSeconds: parseFloat((getPercentile(99) / 1000).toFixed(3))
+      };
+    });
+
+    // Sort by count (highest first) - default sorting
+    return analysis.sort((a, b) => b.count - a.count);
+  }, []);
+
+  // Process Query Hash Data Read Analysis
+  const processQueryHashDataAnalysis = useCallback((queries: any[]): QueryHashDataAnalysis[] => {
+    if (!queries || queries.length === 0) return [];
+
+    // Group queries by queryHash
+    const groupedQueries: { [queryHash: string]: any[] } = {};
+    
+    queries.forEach(query => {
+      if (!query.queryHash) return; // Skip queries without queryHash
+      
+      if (!groupedQueries[query.queryHash]) {
+        groupedQueries[query.queryHash] = [];
+      }
+      groupedQueries[query.queryHash].push(query);
+    });
+
+    // Calculate statistics for each query hash
+    const analysis: QueryHashDataAnalysis[] = Object.entries(groupedQueries).map(([queryHash, queriesForHash]) => {
+      // Extract namespace from the first query in the group
+      const namespace = queriesForHash[0]?.namespace || queriesForHash[0]?.attr?.ns || 'N/A';
+      
+      // Extract data read values in MB
+      const dataReadValues = queriesForHash
+        .map(q => q.dataReadMB || 0)
+        .filter(d => d > 0); // Filter out zero values
+
+      if (dataReadValues.length === 0) {
+        return {
+          queryHash,
+          namespace,
+          count: queriesForHash.length,
+          avgDataReadMB: 0,
+          maxDataReadMB: 0,
+          minDataReadMB: 0
+        };
+      }
+
+      // Calculate statistics
+      const avg = dataReadValues.reduce((sum, d) => sum + d, 0) / dataReadValues.length;
+      const max = Math.max(...dataReadValues);
+      const min = Math.min(...dataReadValues);
+
+      return {
+        queryHash,
+        namespace,
+        count: queriesForHash.length,
+        avgDataReadMB: parseFloat(avg.toFixed(3)),
+        maxDataReadMB: parseFloat(max.toFixed(3)),
+        minDataReadMB: parseFloat(min.toFixed(3))
+      };
+    });
+
+    // Sort by count (highest first) - default sorting
+    return analysis.sort((a, b) => b.count - a.count);
+  }, []);
+
+  // Process Query Hash Yields Analysis
+  const processQueryHashYieldsAnalysis = useCallback((queries: any[]): QueryHashYieldsAnalysis[] => {
+    if (!queries || queries.length === 0) return [];
+
+    // Group queries by queryHash
+    const groupedQueries: { [queryHash: string]: any[] } = {};
+    
+    queries.forEach(query => {
+      if (!query.queryHash) return; // Skip queries without queryHash
+      
+      if (!groupedQueries[query.queryHash]) {
+        groupedQueries[query.queryHash] = [];
+      }
+      groupedQueries[query.queryHash].push(query);
+    });
+
+    // Calculate statistics for each query hash
+    const analysis: QueryHashYieldsAnalysis[] = Object.entries(groupedQueries).map(([queryHash, queriesForHash]) => {
+      // Extract namespace from the first query in the group
+      const namespace = queriesForHash[0]?.namespace || queriesForHash[0]?.attr?.ns || 'N/A';
+      
+      // Extract yields values
+      const yieldsValues = queriesForHash
+        .map(q => q.numYields || 0)
+        .filter(y => y > 0); // Filter out zero values
+
+      if (yieldsValues.length === 0) {
+        return {
+          queryHash,
+          namespace,
+          count: queriesForHash.length,
+          avgYields: 0,
+          maxYields: 0,
+          minYields: 0
+        };
+      }
+
+      // Calculate statistics
+      const avg = yieldsValues.reduce((sum, y) => sum + y, 0) / yieldsValues.length;
+      const max = Math.max(...yieldsValues); 
+      const min = Math.min(...yieldsValues);
+
+      return {
+        queryHash,
+        namespace,
+        count: queriesForHash.length,
+        avgYields: parseFloat(avg.toFixed(2)),
+        maxYields: max,
+        minYields: min
+      };
+    });
+
+    // Sort by count (highest first) - default sorting
+    return analysis.sort((a, b) => b.count - a.count);
+  }, []);
+
+  // Sort query hash analysis data
+  const sortQueryHashAnalysis = useCallback((data: QueryHashAnalysis[], field: keyof QueryHashAnalysis, direction: 'asc' | 'desc'): QueryHashAnalysis[] => {
+    return [...data].sort((a, b) => {
+      const aValue = a[field];
+      const bValue = b[field];
+      
+      // Handle string comparison for queryHash
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        const result = aValue.localeCompare(bValue);
+        return direction === 'asc' ? result : -result;
+      }
+      
+      // Handle numeric comparison
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        return direction === 'asc' ? aValue - bValue : bValue - aValue;
+      }
+      
+      return 0;
+    });
+  }, []);
+
+  // Sort query hash data read analysis data
+  const sortQueryHashDataAnalysis = useCallback((data: QueryHashDataAnalysis[], field: keyof QueryHashDataAnalysis, direction: 'asc' | 'desc'): QueryHashDataAnalysis[] => {
+    return [...data].sort((a, b) => {
+      const aValue = a[field];
+      const bValue = b[field];
+      
+      // Handle string comparison for queryHash
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        const result = aValue.localeCompare(bValue);
+        return direction === 'asc' ? result : -result;
+      }
+      
+      // Handle numeric comparison
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        return direction === 'asc' ? aValue - bValue : bValue - aValue;
+      }
+      
+      return 0;
+    });
+  }, []);
+
+  // Sort query hash yields analysis data
+  const sortQueryHashYieldsAnalysis = useCallback((data: QueryHashYieldsAnalysis[], field: keyof QueryHashYieldsAnalysis, direction: 'asc' | 'desc'): QueryHashYieldsAnalysis[] => {
+    return [...data].sort((a, b) => {
+      const aValue = a[field];
+      const bValue = b[field];
+      
+      // Handle string comparison for queryHash
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        const result = aValue.localeCompare(bValue);
+        return direction === 'asc' ? result : -result;
+      }
+      
+      // Handle numeric comparison
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        return direction === 'asc' ? aValue - bValue : bValue - aValue;
+      }
+      
+      return 0;
+    });
+  }, []);
+
+  // Get sorted query hash analysis data
+  const sortedQueryHashAnalysis = useMemo(() => {
+    return sortQueryHashAnalysis(queryHashAnalysis, queryHashSortField, queryHashSortDirection);
+  }, [queryHashAnalysis, queryHashSortField, queryHashSortDirection, sortQueryHashAnalysis]);
+
+  // Get sorted query hash data analysis data
+  const sortedQueryHashDataAnalysis = useMemo(() => {
+    return sortQueryHashDataAnalysis(queryHashDataAnalysis, queryHashDataSortField, queryHashDataSortDirection);
+  }, [queryHashDataAnalysis, queryHashDataSortField, queryHashDataSortDirection, sortQueryHashDataAnalysis]);
+
+  // Get sorted query hash yields analysis data
+  const sortedQueryHashYieldsAnalysis = useMemo(() => {
+    return sortQueryHashYieldsAnalysis(queryHashYieldsAnalysis, queryHashYieldsSortField, queryHashYieldsSortDirection);
+  }, [queryHashYieldsAnalysis, queryHashYieldsSortField, queryHashYieldsSortDirection, sortQueryHashYieldsAnalysis]);
+
+  // Pagination calculations
+  const queryHashTotalPages = useMemo(() => {
+    return Math.ceil(sortedQueryHashAnalysis.length / queryHashItemsPerPage);
+  }, [sortedQueryHashAnalysis.length, queryHashItemsPerPage]);
+
+  const queryHashDataTotalPages = useMemo(() => {
+    return Math.ceil(sortedQueryHashDataAnalysis.length / queryHashDataItemsPerPage);
+  }, [sortedQueryHashDataAnalysis.length, queryHashDataItemsPerPage]);
+
+  const queryHashYieldsTotalPages = useMemo(() => {
+    return Math.ceil(sortedQueryHashYieldsAnalysis.length / queryHashYieldsItemsPerPage);
+  }, [sortedQueryHashYieldsAnalysis.length, queryHashYieldsItemsPerPage]);
+
+  // Get current page data
+  const paginatedQueryHashData = useMemo(() => {
+    const startIndex = (queryHashCurrentPage - 1) * queryHashItemsPerPage;
+    const endIndex = startIndex + queryHashItemsPerPage;
+    return sortedQueryHashAnalysis.slice(startIndex, endIndex);
+  }, [sortedQueryHashAnalysis, queryHashCurrentPage, queryHashItemsPerPage]);
+
+  const paginatedQueryHashDataAnalysis = useMemo(() => {
+    const startIndex = (queryHashDataCurrentPage - 1) * queryHashDataItemsPerPage;
+    const endIndex = startIndex + queryHashDataItemsPerPage;
+    return sortedQueryHashDataAnalysis.slice(startIndex, endIndex);
+  }, [sortedQueryHashDataAnalysis, queryHashDataCurrentPage, queryHashDataItemsPerPage]);
+
+  const paginatedQueryHashYieldsAnalysis = useMemo(() => {
+    const startIndex = (queryHashYieldsCurrentPage - 1) * queryHashYieldsItemsPerPage;
+    const endIndex = startIndex + queryHashYieldsItemsPerPage;
+    return sortedQueryHashYieldsAnalysis.slice(startIndex, endIndex);
+  }, [sortedQueryHashYieldsAnalysis, queryHashYieldsCurrentPage, queryHashYieldsItemsPerPage]);
+
+  // Handle column header click for sorting
+  const handleQueryHashSort = useCallback((field: keyof QueryHashAnalysis) => {
+    if (field === 'queryHash') return; // Don't sort by queryHash as requested
+    
+    if (queryHashSortField === field) {
+      // Toggle direction if same field
+      setQueryHashSortDirection(queryHashSortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // New field, default to descending for numeric fields, ascending for strings
+      setQueryHashSortField(field);
+      setQueryHashSortDirection('desc');
+    }
+    
+    // Reset to first page when sorting changes
+    setQueryHashCurrentPage(1);
+  }, [queryHashSortField, queryHashSortDirection]);
+
+  // Handle column header click for data read sorting
+  const handleQueryHashDataSort = useCallback((field: keyof QueryHashDataAnalysis) => {
+    if (field === 'queryHash') return; // Don't sort by queryHash as requested
+    
+    if (queryHashDataSortField === field) {
+      // Toggle direction if same field
+      setQueryHashDataSortDirection(queryHashDataSortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // New field, default to descending for numeric fields, ascending for strings
+      setQueryHashDataSortField(field);
+      setQueryHashDataSortDirection('desc');
+    }
+    
+    // Reset to first page when sorting changes
+    setQueryHashDataCurrentPage(1);
+  }, [queryHashDataSortField, queryHashDataSortDirection]);
+
+  // Handle column header click for yields sorting
+  const handleQueryHashYieldsSort = useCallback((field: keyof QueryHashYieldsAnalysis) => {
+    if (field === 'queryHash') return; // Don't sort by queryHash as requested
+    
+    if (queryHashYieldsSortField === field) {
+      // Toggle direction if same field
+      setQueryHashYieldsSortDirection(queryHashYieldsSortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // New field, default to descending for numeric fields, ascending for strings  
+      setQueryHashYieldsSortField(field);
+      setQueryHashYieldsSortDirection('desc');
+    }
+    
+    // Reset to first page when sorting changes
+    setQueryHashYieldsCurrentPage(1);
+  }, [queryHashYieldsSortField, queryHashYieldsSortDirection]);
+
+  // Pagination handlers
+  const handleQueryHashPageChange = useCallback((page: number) => {
+    setQueryHashCurrentPage(page);
+  }, []);
+
+  const handleQueryHashPrevPage = useCallback(() => {
+    setQueryHashCurrentPage(prev => Math.max(1, prev - 1));
+  }, []);
+
+  const handleQueryHashNextPage = useCallback(() => {
+    setQueryHashCurrentPage(prev => Math.min(queryHashTotalPages, prev + 1));
+  }, [queryHashTotalPages]);
+
+  // Data read pagination handlers
+  const handleQueryHashDataPageChange = useCallback((page: number) => {
+    setQueryHashDataCurrentPage(page);
+  }, []);
+
+  const handleQueryHashDataPrevPage = useCallback(() => {
+    setQueryHashDataCurrentPage(prev => Math.max(1, prev - 1));
+  }, []);
+
+  const handleQueryHashDataNextPage = useCallback(() => {
+    setQueryHashDataCurrentPage(prev => Math.min(queryHashDataTotalPages, prev + 1));
+  }, [queryHashDataTotalPages]);
+
+  // Yields pagination handlers
+  const handleQueryHashYieldsPageChange = useCallback((page: number) => {
+    setQueryHashYieldsCurrentPage(page);
+  }, []);
+
+  const handleQueryHashYieldsPrevPage = useCallback(() => {
+    setQueryHashYieldsCurrentPage(prev => Math.max(1, prev - 1));
+  }, []);
+
+  const handleQueryHashYieldsNextPage = useCallback(() => {
+    setQueryHashYieldsCurrentPage(prev => Math.min(queryHashYieldsTotalPages, prev + 1));
+  }, [queryHashYieldsTotalPages]);
+
+  // Handle Query Hash Analysis row click - show random query from that hash
+  const handleQueryHashClick = useCallback((queryHash: string) => {
+    // Use the same data source as Query Hash Analysis (unfiltered data)
+    const dataSource = originalSlowQueries.length > 0 ? originalSlowQueries : analytics?.slowQueries;
+    if (!dataSource) return;
+    
+    // Find all queries with the selected queryHash
+    const queriesWithHash = dataSource.filter(query => query.queryHash === queryHash);
+    
+    if (queriesWithHash.length === 0) return;
+    
+    // Select a random query from the group
+    const randomIndex = Math.floor(Math.random() * queriesWithHash.length);
+    const randomQuery = queriesWithHash[randomIndex];
+    
+    // Open query details modal
+    setSelectedQuery(randomQuery);
+    setShowQueryModal(true);
+  }, [originalSlowQueries, analytics?.slowQueries]);
 
   // Auto-analyze when timestamp changes
   useEffect(() => {
@@ -869,6 +1576,573 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
       analyzeQueriesAtTimestamp(selectedTimestamp);
     }
   }, [selectedTimestamp, analyzeQueriesAtTimestamp]);
+
+  // Update query hash analysis when analytics data changes
+  useEffect(() => {
+    // Use originalSlowQueries if available (unfiltered data), otherwise fall back to analytics.slowQueries
+    let dataSource = originalSlowQueries.length > 0 ? originalSlowQueries : analytics?.slowQueries;
+    
+    if (dataSource) {
+      // Apply filters to the data source for Query Hash Analysis
+      let filteredDataSource = dataSource;
+      
+      // Apply operation type filter
+      if (operationFilter.length > 0) {
+        filteredDataSource = filteredDataSource.filter((query: any) => {
+          const operationType = getOperationType(query);
+          return operationType && operationFilter.includes(operationType);
+        });
+      }
+      
+      // Apply namespace filter
+      if (namespaceFilter.length > 0) {
+        filteredDataSource = filteredDataSource.filter((query: any) => {
+          const namespace = query.namespace || query.attr?.ns;
+          return namespace && namespaceFilter.includes(namespace);
+        });
+      }
+      
+      // Apply remote IP filter
+      if (remoteIpFilter.length > 0) {
+        filteredDataSource = filteredDataSource.filter((query: any) => {
+          const remoteIP = query.remoteIP || query.attr?.remote;
+          if (!remoteIP) return false;
+          // Remove port number if present and compare
+          const cleanIP = remoteIP.includes(':') ? remoteIP.split(':')[0] : remoteIP;
+          return remoteIpFilter.includes(cleanIP);
+        });
+      }
+      
+      // Apply exclude system namespaces filter
+      if (excludeSystemNamespaces) {
+        filteredDataSource = filteredDataSource.filter((query: any) => {
+          const namespace = query.namespace || query.attr?.ns;
+          if (!namespace) return true; // Include if no namespace
+          return !/^(admin|config|local)\./.test(namespace);
+        });
+      }
+      
+      // Apply in-memory sorts filter
+      if (inMemorySortsFilter) {
+        filteredDataSource = filteredDataSource.filter((query: any) => query.hasSortStage === true);
+      }
+      
+      // Apply from multi-planner filter
+      if (fromMultiPlannerFilter) {
+        filteredDataSource = filteredDataSource.filter((query: any) => query.fromMultiPlanner === true);
+      }
+      
+      // Apply collection scans filter
+      if (collectionScansFilter) {
+        filteredDataSource = filteredDataSource.filter((query: any) => {
+          const planSummary = query.planSummary || query.attr?.planSummary;
+          return planSummary === 'COLLSCAN';
+        });
+      }
+      
+      const analysis = processQueryHashAnalysis(filteredDataSource);
+      setQueryHashAnalysis(analysis);
+      
+      const dataAnalysis = processQueryHashDataAnalysis(filteredDataSource);
+      setQueryHashDataAnalysis(dataAnalysis);
+      
+      const yieldsAnalysis = processQueryHashYieldsAnalysis(filteredDataSource);
+      setQueryHashYieldsAnalysis(yieldsAnalysis);
+    }
+  }, [originalSlowQueries, analytics?.slowQueries, operationFilter, namespaceFilter, remoteIpFilter, excludeSystemNamespaces, inMemorySortsFilter, fromMultiPlannerFilter, collectionScansFilter, processQueryHashAnalysis, processQueryHashDataAnalysis, processQueryHashYieldsAnalysis]);
+
+  // App Traffic Analysis state
+  const [appTrafficData, setAppTrafficData] = useState<{
+    languages: { name: string; count: number; driverName?: string; driverVersion?: string }[];
+    ipAddresses: { name: string; count: number }[];
+    operationTypes: { name: string; count: number }[];
+  }>({ languages: [], ipAddresses: [], operationTypes: [] });
+  const [appTrafficLoading, setAppTrafficLoading] = useState(false);
+
+  // Fetch App Traffic Analysis data
+  const fetchAppTrafficData = useCallback(async () => {
+    console.log('🚀 fetchAppTrafficData called with:', { userEmail, sourceFile });
+    
+    if (!userEmail || !sourceFile) {
+      console.log('🚫 fetchAppTrafficData returning early - missing params:', { userEmail, sourceFile });
+      return;
+    }
+    
+    console.log('✅ fetchAppTrafficData proceeding with API call');
+    
+    setAppTrafficLoading(true);
+    try {
+      const params = new URLSearchParams({
+        sourceFile: sourceFile
+      });
+
+      const url = `/api/app-traffic?${params}`;
+      console.log('📡 Making API call to:', url);
+
+      const response = await fetch(url, {
+        headers: {
+          'x-user-email': userEmail,
+        },
+      });
+      const data = await response.json();
+      
+      console.log('📥 API response received:', data);
+      
+      if (data.success) {
+        console.log('✅ Setting app traffic data:', data.data);
+        setAppTrafficData(data.data);
+      } else {
+        console.error('❌ API returned error:', data.error);
+        setAppTrafficData({ languages: [], ipAddresses: [], operationTypes: [] });
+      }
+    } catch (error) {
+      console.error('❌ Error in fetchAppTrafficData:', error);
+      setAppTrafficData({ languages: [], ipAddresses: [], operationTypes: [] });
+    } finally {
+      setAppTrafficLoading(false);
+    }
+  }, [userEmail, sourceFile]);
+
+  // Fetch app traffic data when component mounts or file changes
+  useEffect(() => {
+    console.log('🔄 App Traffic useEffect triggered');
+    fetchAppTrafficData();
+  }, [fetchAppTrafficData]);
+
+  // Also fetch when App Traffic tab becomes active
+  useEffect(() => {
+    if (appAnalysisActiveTab === 'traffic') {
+      console.log('📊 App Traffic tab became active, fetching data...');
+      fetchAppTrafficData();
+    }
+  }, [appAnalysisActiveTab, fetchAppTrafficData]);
+
+  // Remove the old processAppTrafficAnalysis function and memoized data
+
+  // Modern Treemap Heatmap Component (size based on frequency)
+  const SimplePieChart = ({ data, title, colors }: { 
+    data: { name: string; count: number; driverName?: string; driverVersion?: string }[], 
+    title: string,
+    colors: string[]
+  }) => {
+    const [tooltip, setTooltip] = useState<{ show: boolean; content: string; x: number; y: number }>({
+      show: false,
+      content: '',
+      x: 0,
+      y: 0
+    });
+
+    const [detailCard, setDetailCard] = useState<{ 
+      show: boolean; 
+      item: any; 
+      percentage: number; 
+      x: number; 
+      y: number 
+    }>({
+      show: false,
+      item: null,
+      percentage: 0,
+      x: 0,
+      y: 0
+    });
+
+    // Generate enhanced green gradient colors based on frequency (higher = darker green)
+    const generateHeatmapColors = (dataItems: any[]) => {
+      if (!dataItems || dataItems.length === 0) return new Map();
+      
+      const maxCount = Math.max(...dataItems.map(item => item.count));
+      const minCount = Math.min(...dataItems.map(item => item.count));
+      
+      const colorMap = new Map();
+      
+      dataItems.forEach((item) => {
+        // Calculate intensity based on frequency (0 to 1)
+        const intensity = maxCount === minCount ? 1 : (item.count - minCount) / (maxCount - minCount);
+        
+        // Enhanced green gradient with better range and vibrancy
+        const baseHue = 120; // Pure green hue
+        
+        // More pronounced color differences for better distinction
+        const saturation = Math.round(30 + (intensity * 60)); // 30% to 90% saturation
+        const lightness = Math.round(90 - (intensity * 55)); // 90% to 35% lightness
+        
+        // Alternative: use more vibrant greens for high frequency items
+        const adjustedSaturation = intensity > 0.7 ? 
+          Math.round(70 + (intensity * 25)) : // High frequency: 70% to 95% saturation
+          Math.round(25 + (intensity * 45)); // Low frequency: 25% to 70% saturation
+          
+        const adjustedLightness = intensity > 0.7 ?
+          Math.round(50 - (intensity * 20)) : // High frequency: darker (50% to 30%)
+          Math.round(85 - (intensity * 35)); // Low frequency: lighter (85% to 50%)
+        
+        const color = `hsl(${baseHue}, ${adjustedSaturation}%, ${adjustedLightness}%)`;
+        colorMap.set(item.name + (item.driverName || ''), color);
+      });
+      
+      return colorMap;
+    };
+
+    // Simple and effective treemap algorithm that ensures ALL values are displayed
+    const calculateTreemapLayout = (items: any[], containerHeight: number = 400) => {
+      if (!items || items.length === 0) return [];
+      
+      const total = items.reduce((sum, item) => sum + item.count, 0);
+      const sortedItems = [...items].sort((a, b) => b.count - a.count);
+      
+      // Use a large container width that will be scaled by CSS
+      const containerWidth = 1200; // This will be scaled by CSS to fit container
+      
+      // Simple row-based layout that guarantees full width usage and no overlaps
+      const createRowBasedLayout = (items: any[]): any[] => {
+        const result: any[] = [];
+        
+        // Calculate how many rows we need based on item count
+        const minItemWidth = 60; // Minimum width for readability
+        const maxItemsPerRow = Math.max(1, Math.floor(containerWidth / minItemWidth));
+        const totalRows = Math.ceil(items.length / maxItemsPerRow);
+        const rowHeight = containerHeight / totalRows;
+        
+        let currentIndex = 0;
+        
+        for (let row = 0; row < totalRows; row++) {
+          const remainingItems = items.length - currentIndex;
+          const remainingRows = totalRows - row;
+          const itemsInThisRow = Math.min(maxItemsPerRow, Math.ceil(remainingItems / remainingRows));
+          
+          const rowItems = items.slice(currentIndex, currentIndex + itemsInThisRow);
+          const rowY = row * rowHeight;
+          
+          let currentX = 0;
+          
+          rowItems.forEach((item, itemIndex) => {
+            // Calculate width based on frequency and available space
+            const frequencyRatio = item.count / total;
+            const baseWidth = containerWidth / itemsInThisRow;
+            
+            // Adjust width slightly based on frequency but ensure no overlaps
+            const sizeMultiplier = 0.8 + (frequencyRatio * items.length * 0.4); // Subtle size variation
+            const itemWidth = Math.max(minItemWidth, Math.min(baseWidth * sizeMultiplier, containerWidth - currentX));
+            
+            result.push({
+              ...item,
+              x: Math.round(currentX),
+              y: Math.round(rowY),
+              width: Math.round(itemWidth),
+              height: Math.round(rowHeight),
+              percentage: (item.count / total) * 100
+            });
+            
+            currentX += itemWidth;
+          });
+          
+          currentIndex += itemsInThisRow;
+        }
+        
+        return result;
+      };
+      
+      return createRowBasedLayout(sortedItems);
+    };
+
+    const handleMouseEnter = (event: React.MouseEvent, item: any, percentage: number) => {
+      const tooltipContent = item.driverName && item.driverVersion 
+        ? `${item.driverName} v${item.driverVersion}: ${item.count.toLocaleString()} entries (${percentage.toFixed(1)}%)`
+        : `${item.name}: ${item.count.toLocaleString()} entries (${percentage.toFixed(1)}%)`;
+      
+      setTooltip({
+        show: true,
+        content: tooltipContent,
+        x: event.clientX,
+        y: event.clientY - 10
+      });
+    };
+
+    const handleMouseLeave = () => {
+      setTooltip({ show: false, content: '', x: 0, y: 0 });
+    };
+
+    const handleMouseMove = (event: React.MouseEvent) => {
+      if (tooltip.show) {
+        setTooltip(prev => ({
+          ...prev,
+          x: event.clientX,
+          y: event.clientY - 10
+        }));
+      }
+    };
+
+    const handleClick = (event: React.MouseEvent, item: any, percentage: number) => {
+      event.stopPropagation();
+      setTooltip({ show: false, content: '', x: 0, y: 0 }); // Hide tooltip when card opens
+      
+      setDetailCard({
+        show: true,
+        item,
+        percentage,
+        x: event.clientX,
+        y: event.clientY
+      });
+    };
+
+    const closeDetailCard = () => {
+      setDetailCard({ show: false, item: null, percentage: 0, x: 0, y: 0 });
+    };
+
+    // Close detail card when clicking outside
+    const handleBackdropClick = () => {
+      closeDetailCard();
+    };
+
+    if (!data || data.length === 0) {
+      return (
+        <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-6 border border-gray-200 text-center shadow-sm">
+          <h4 className="text-sm font-semibold text-gray-600 mb-2">{title}</h4>
+          <p className="text-gray-500 text-sm">No data available</p>
+        </div>
+      );
+    }
+
+    const total = data.reduce((sum, item) => sum + item.count, 0);
+    const colorMap = generateHeatmapColors(data);
+    
+    // Use dynamic container dimensions for true responsiveness
+    const containerHeight = 400;
+    const layout = calculateTreemapLayout(data, containerHeight);
+
+    return (
+      <>
+        <div className="bg-gradient-to-br from-white to-gray-50 rounded-xl p-6 border border-gray-200 shadow-lg relative overflow-hidden">
+          {/* Background decoration */}
+          <div className="absolute inset-0 bg-gradient-to-br from-green-50/30 to-transparent pointer-events-none"></div>
+          
+          <div className="relative z-10">
+            <h4 className="text-lg font-semibold text-gray-800 mb-6 text-center">{title}</h4>
+            
+            {/* Full-width Treemap Container - No Empty Spaces */}
+            <div className="w-full mb-6 overflow-hidden">
+              <div 
+                className="relative border border-gray-200 rounded-lg overflow-hidden shadow-inner bg-white"
+                style={{ 
+                  width: '100%',
+                  height: `${containerHeight}px` 
+                }}
+                onMouseMove={handleMouseMove}
+              >
+                {layout.map((item, index) => {
+                  const cellColor = colorMap.get(item.name + (item.driverName || ''));
+                  
+                  return (
+                    <div
+                      key={index}
+                      className="absolute cursor-pointer transition-all duration-300 hover:z-10 group border border-white/80"
+                      style={{
+                        left: `${(item.x / 1200) * 100}%`, // Convert to percentage for responsive scaling
+                        top: `${item.y}px`,
+                        width: `${(item.width / 1200) * 100}%`, // Convert to percentage for responsive scaling
+                        height: `${item.height}px`,
+                        backgroundColor: cellColor,
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                      }}
+                      onMouseEnter={(e) => handleMouseEnter(e, item, item.percentage)}
+                      onMouseLeave={handleMouseLeave}
+                      onClick={(e) => handleClick(e, item, item.percentage)}
+                    >
+                      {/* Hover overlay */}
+                      <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                      
+                      {/* Text content - adaptive based on size with better visibility */}
+                      <div className="h-full flex flex-col items-center justify-center p-1 relative z-10 overflow-hidden">
+                        {item.width > 60 && item.height > 40 && (
+                          <>
+                            <span className="text-xs font-semibold text-gray-800 text-center leading-tight mb-1 drop-shadow-sm truncate w-full">
+                              {item.driverName ? 
+                                `${item.driverName}` : 
+                                item.name.length > 10 ? `${item.name.substring(0, 10)}...` : item.name
+                              }
+                            </span>
+                            {item.driverVersion && item.width > 80 && item.height > 50 && (
+                              <span className="text-xs text-gray-600 text-center drop-shadow-sm truncate w-full">
+                                v{item.driverVersion}
+                              </span>
+                            )}
+                            {item.width > 100 && item.height > 60 && (
+                              <span className="text-xs font-bold text-gray-700 text-center mt-1 drop-shadow-sm">
+                                {item.count.toLocaleString()}
+                              </span>
+                            )}
+                          </>
+                        )}
+                        {item.width > 30 && item.width <= 60 && item.height > 20 && (
+                          <span className="text-xs font-medium text-gray-800 text-center leading-tight drop-shadow-sm truncate w-full px-1" style={{ fontSize: '10px' }}>
+                            {item.driverName ? 
+                              `${item.driverName.substring(0, 3)}` : 
+                              item.name.substring(0, 4)
+                            }
+                          </span>
+                        )}
+                        {item.width > 16 && item.width <= 30 && item.height > 16 && (
+                          <span className="text-gray-800 text-center font-bold drop-shadow-sm" style={{ fontSize: '8px' }}>
+                            {item.driverName ? 
+                              item.driverName.charAt(0).toUpperCase() : 
+                              item.name.charAt(0).toUpperCase()
+                            }
+                          </span>
+                        )}
+                      </div>
+                      
+                      {/* Hover border highlight */}
+                      <div className="absolute inset-0 border-2 border-green-400/0 group-hover:border-green-400/60 transition-all duration-300 rounded-sm"></div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Enhanced Legend with improved green gradient */}
+            <div className="flex items-center justify-center space-x-6 text-sm text-gray-600">
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 rounded-md bg-gradient-to-r from-green-50 to-green-100 border border-gray-200 shadow-sm" style={{ backgroundColor: 'hsl(120, 25%, 85%)' }}></div>
+                <span className="font-medium">Very Low</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 rounded-md bg-gradient-to-r from-green-200 to-green-300 border border-gray-200 shadow-sm" style={{ backgroundColor: 'hsl(120, 45%, 65%)' }}></div>
+                <span className="font-medium">Low</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 rounded-md bg-gradient-to-r from-green-400 to-green-500 border border-gray-200 shadow-sm" style={{ backgroundColor: 'hsl(120, 70%, 50%)' }}></div>
+                <span className="font-medium">Medium</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 rounded-md bg-gradient-to-r from-green-600 to-green-700 border border-gray-200 shadow-sm" style={{ backgroundColor: 'hsl(120, 80%, 40%)' }}></div>
+                <span className="font-medium">High</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 rounded-md bg-gradient-to-r from-green-800 to-green-900 border border-gray-200 shadow-sm" style={{ backgroundColor: 'hsl(120, 95%, 30%)' }}></div>
+                <span className="font-medium">Very High</span>
+              </div>
+            </div>
+
+            {/* Data summary */}
+            <div className="mt-4 text-center">
+              <p className="text-sm text-gray-500">
+                Showing <span className="font-semibold text-gray-700">{data.length.toLocaleString()}</span> unique entries
+                • Total: <span className="font-semibold text-green-600">{total.toLocaleString()}</span> occurrences
+                • <span className="font-medium text-gray-600">Size = Frequency</span>
+              </p>
+            </div>
+          </div>
+
+          {/* Enhanced Tooltip */}
+          {tooltip.show && (
+            <div
+              className="fixed z-50 bg-gray-900/95 backdrop-blur-sm text-white px-4 py-3 rounded-xl shadow-2xl text-sm pointer-events-none border border-gray-700"
+              style={{
+                left: `${tooltip.x + 15}px`,
+                top: `${tooltip.y}px`,
+                maxWidth: '320px',
+                wordWrap: 'break-word'
+              }}
+            >
+              <div className="select-text cursor-text font-medium">
+                {tooltip.content}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Enhanced Detail Card Modal */}
+        {detailCard.show && (
+          <div 
+            className="fixed inset-0 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={handleBackdropClick}
+          >
+            <div 
+              className="bg-white rounded-2xl shadow-2xl p-8 max-w-lg w-full relative transform transition-all duration-300 scale-100 border border-gray-200"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)'
+              }}
+            >
+              {/* Close button */}
+              <button
+                onClick={closeDetailCard}
+                className="absolute top-6 right-6 text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-full hover:bg-gray-100"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              {/* Card header */}
+              <div className="mb-6">
+                <h3 className="text-2xl font-bold text-gray-800 mb-2">📊 Details</h3>
+                <div className="w-full h-px bg-gradient-to-r from-green-400 to-transparent"></div>
+              </div>
+
+              {/* Card content */}
+              <div className="space-y-4 select-text">
+                {detailCard.item.driverName && detailCard.item.driverVersion ? (
+                  <>
+                    <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                      <span className="font-semibold text-gray-600">Driver Name:</span>
+                      <span className="text-gray-900 font-mono bg-gray-50 px-3 py-1 rounded-lg">{detailCard.item.driverName}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                      <span className="font-semibold text-gray-600">Version:</span>
+                      <span className="text-gray-900 font-mono bg-gray-50 px-3 py-1 rounded-lg">{detailCard.item.driverVersion}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                      <span className="font-semibold text-gray-600">Full Name:</span>
+                      <span className="text-gray-900 font-mono bg-gray-50 px-3 py-1 rounded-lg">{detailCard.item.driverName} v{detailCard.item.driverVersion}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                    <span className="font-semibold text-gray-600">Name:</span>
+                    <span className="text-gray-900 font-mono bg-gray-50 px-3 py-1 rounded-lg">{detailCard.item.name}</span>
+                  </div>
+                )}
+                
+                <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                  <span className="font-semibold text-gray-600">Entry Count:</span>
+                  <span className="text-gray-900 font-bold text-lg">{detailCard.item.count.toLocaleString()}</span>
+                </div>
+                
+                <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                  <span className="font-semibold text-gray-600">Percentage:</span>
+                  <span className="text-green-600 font-bold text-lg">{detailCard.percentage.toFixed(2)}%</span>
+                </div>
+
+                <div className="flex justify-between items-center py-2">
+                  <span className="font-semibold text-gray-600">Total Entries:</span>
+                  <span className="text-gray-500 font-medium">{total.toLocaleString()}</span>
+                </div>
+              </div>
+
+              {/* Enhanced copy-friendly text area */}
+              <div className="mt-8 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200">
+                <label className="block text-sm font-semibold text-gray-700 mb-3">📋 Copy-friendly format:</label>
+                <textarea
+                  readOnly
+                  className="w-full h-24 text-sm font-mono bg-white border border-gray-300 rounded-lg p-3 resize-none select-all shadow-inner focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                  value={detailCard.item.driverName && detailCard.item.driverVersion 
+                    ? `Driver: ${detailCard.item.driverName} v${detailCard.item.driverVersion}\nEntries: ${detailCard.item.count.toLocaleString()}\nPercentage: ${detailCard.percentage.toFixed(2)}%\nTotal: ${total.toLocaleString()}`
+                    : `Name: ${detailCard.item.name}\nEntries: ${detailCard.item.count.toLocaleString()}\nPercentage: ${detailCard.percentage.toFixed(2)}%\nTotal: ${total.toLocaleString()}`
+                  }
+                />
+                <p className="text-xs text-gray-500 mt-2 flex items-center">
+                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                  Click textarea and Ctrl+A to select all, then Ctrl+C to copy
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  };
 
 
   if (loading) {
@@ -1128,9 +2402,39 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
         </div>
       )}
 
-      {/* Connection Analytics Widget */}
+      {/* App Analysis Widget */}
       <div className="bg-white rounded-xl p-4 lg:p-6 border border-gray-300">
-        <h3 className="text-lg lg:text-xl font-semibold text-green-600 mb-4">🌐 Application Connections</h3>
+        <h3 className="text-lg lg:text-xl font-semibold text-green-600 mb-4"> App Analysis</h3>
+        
+        {/* App Analysis Tabs */}
+        <div className="flex space-x-1 bg-gray-100 rounded-lg p-1 mb-6">
+          <button
+            onClick={() => setAppAnalysisActiveTab('connections')}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              appAnalysisActiveTab === 'connections'
+                ? 'bg-white text-green-600 shadow-sm'
+                : 'text-gray-600 hover:text-green-600'
+            }`}
+          >
+            Application Connections
+          </button>
+          <button
+            onClick={() => {
+              console.log('🔘 App Traffic tab clicked, switching to traffic tab');
+              setAppAnalysisActiveTab('traffic');
+            }}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              appAnalysisActiveTab === 'traffic'
+                ? 'bg-white text-green-600 shadow-sm'
+                : 'text-gray-600 hover:text-green-600'
+            }`}
+          >
+            App Traffic Analysis
+          </button>
+        </div>
+
+        {/* Application Connections Tab */}
+        {appAnalysisActiveTab === 'connections' && (
         <div className="space-y-3 max-h-64 overflow-y-auto">
           {analytics.connectionStats.length > 0 ? (
             analytics.connectionStats.map((conn, index) => (
@@ -1141,10 +2445,10 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                       <span className="text-green-400 font-semibold text-sm">
                         {conn.appName || 'Unknown App'}
                       </span>
-                      <span className="text-green-600 text-xs px-2 py-1 bg-green-100 rounded">
+                        <span className="text-green-600 text-xs px-2 py-1 bg-green-100 rounded">
                         {conn.totalConnections} connections
                       </span>
-                      <span className="text-green-400 text-xs px-2 py-1 bg-green-700 rounded">
+                        <span className="text-green-400 text-xs px-2 py-1 bg-green-700 rounded">
                         {conn.totalUniqueIPs} unique IPs
                       </span>
                     </div>
@@ -1165,7 +2469,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                             <span className={`text-xs px-2 py-1 rounded font-medium ${
                               conn.compatibility.isCompatible 
                                 ? 'bg-green-100 text-green-800' 
-                                : 'bg-green-100 text-green-800'
+                                  : 'bg-green-100 text-green-800'
                             }`}>
                               {conn.compatibility.isCompatible ? '✅ Compatible' : '❌ Not Compatible'}
                             </span>
@@ -1180,12 +2484,12 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                                   <span className={`px-1 py-0.5 rounded ${
                                     result.isCompatible 
                                       ? 'bg-green-100 text-green-800' 
-                                      : 'bg-green-100 text-green-800'
+                                        : 'bg-green-100 text-green-800'
                                   }`}>
                                     {result.isCompatible ? '✅' : '❌'}
                                   </span>
                                   {!result.isCompatible && (
-                                    <span className="text-green-400 text-xs">
+                                      <span className="text-green-400 text-xs">
                                       {result.notes?.includes('does not support') 
                                         ? 'Unsupported MongoDB version' 
                                         : result.recommendedVersions ? `Rec: ${result.recommendedVersions.slice(0, 2).join(', ')}` : 'Incompatible'
@@ -1199,7 +2503,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                           
                           {/* Overall recommendations */}
                           {!conn.compatibility.isCompatible && conn.compatibility.recommendedVersions && conn.compatibility.recommendedVersions.length > 0 && (
-                            <div className="text-xs text-green-400">
+                              <div className="text-xs text-green-400">
                               <strong>Recommendations:</strong> {conn.compatibility.recommendedVersions.slice(0, 3).join(', ')}
                             </div>
                           )}
@@ -1234,14 +2538,14 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                           <div className="text-gray-600 text-xs">
                             <span>No IP addresses recorded</span>
                             {/* Debug info */}
-                            <div className="text-green-400 text-xs mt-1">
+                              <div className="text-green-400 text-xs mt-1">
                               Debug: remoteIPs = {JSON.stringify(conn.remoteIPs)} | 
                               allRemoteIPs = {JSON.stringify(conn.allRemoteIPs)}
                             </div>
                           </div>
                         )}
                         {conn.totalUniqueIPs > 10 && (
-                          <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+                            <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
                             +{conn.totalUniqueIPs - 10} more
                           </span>
                         )}
@@ -1255,34 +2559,142 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
             <p className="text-gray-600">No application connection metadata found in this log file.</p>
           )}
         </div>
-        
-        {/* Connection Sources Section - DISABLED */}
-        {/* <div className="mt-6">
-          <h4 className="text-green-400 font-semibold mb-3">Connection Sources</h4>
-          <div className="space-y-2 max-h-48 overflow-y-auto">
-            {analytics.connectionSources.slice(0, 10).map((source, index) => (
-              <div key={index} className="bg-gray-50 rounded p-3 border border-gray-200">
-                <div className="flex justify-between items-start">
-                  <span className="text-gray-700 text-sm font-mono">{typeof source._id === 'object' ? JSON.stringify(source._id) : source._id}</span>
-                  <div className="text-right text-xs">
-                    <div className="text-green-600">{source.connections} events</div>
-                    <div className="text-green-400">{source.uniqueConnectionCount} unique</div>
+        )}
+
+        {/* App Traffic Analysis Tab */}
+        {appAnalysisActiveTab === 'traffic' && (
+          <div>
+            <div className="mb-4">
+              <p className="text-sm text-gray-600">
+                Driver analysis from client metadata entries • IP & operation analysis from slow queries
+              </p>
+                  </div>
+
+            {appTrafficLoading ? (
+              <div className="flex justify-center items-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
+                <span className="ml-3 text-gray-600">Loading traffic analysis...</span>
+                </div>
+            ) : (
+              <div className="space-y-6">
+                {/* All Three Sections in One View */}
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                  {/* Driver Analysis Section */}
+                  <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
+                    <h5 className="text-lg font-semibold text-green-800 mb-4 text-center">Drivers</h5>
+                    {appTrafficData.languages && appTrafficData.languages.length > 0 ? (
+                      <SimplePieChart
+                        data={appTrafficData.languages}
+                        title=""
+                        colors={['#10b981', '#059669', '#047857', '#065f46', '#064e3b', '#6b7280', '#4b5563', '#374151', '#1f2937', '#111827']}
+                      />
+                    ) : (
+                      <div className="text-center text-green-600 py-8">
+                        <p>No driver data available</p>
+              </div>
+                    )}
+                    <div className="mt-4 bg-white/60 rounded-lg p-3 border border-green-300">
+                      <div className="text-sm">
+                        <span className="text-green-700 font-medium">Unique Drivers:</span>
+                        <span className="ml-2 text-gray-800 font-semibold">{appTrafficData.languages?.length || 0}</span>
+          </div>
+                    </div>
+                  </div>
+
+                  {/* Top IP Addresses Section */}
+                  <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
+                    <h5 className="text-lg font-semibold text-green-800 mb-4 text-center">IP Addresses</h5>
+                    {appTrafficData.ipAddresses && appTrafficData.ipAddresses.length > 0 ? (
+                      <SimplePieChart
+                        data={appTrafficData.ipAddresses}
+                        title=""
+                        colors={['#10b981', '#059669', '#047857', '#065f46', '#064e3b', '#6b7280', '#4b5563', '#374151', '#1f2937', '#111827']}
+                      />
+                    ) : (
+                      <div className="text-center text-green-600 py-8">
+                        <p>No IP address data available</p>
+                      </div>
+                    )}
+                    <div className="mt-4 bg-white/60 rounded-lg p-3 border border-green-300">
+                      <div className="text-sm">
+                        <span className="text-green-700 font-medium">Unique IPs:</span>
+                        <span className="ml-2 text-gray-800 font-semibold">{appTrafficData.ipAddresses?.length || 0}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Operation Types Section */}
+                  <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
+                    <h5 className="text-lg font-semibold text-green-800 mb-4 text-center">Operation Types</h5>
+                    {appTrafficData.operationTypes && appTrafficData.operationTypes.length > 0 ? (
+                      <SimplePieChart
+                        data={appTrafficData.operationTypes}
+                        title=""
+                        colors={['#10b981', '#059669', '#047857', '#065f46', '#064e3b', '#6b7280', '#4b5563', '#374151', '#1f2937', '#111827']}
+                      />
+                    ) : (
+                      <div className="text-center text-green-600 py-8">
+                        <p>No operation type data available</p>
+                      </div>
+                    )}
+                    <div className="mt-4 bg-white/60 rounded-lg p-3 border border-green-300">
+                      <div className="text-sm">
+                        <span className="text-green-700 font-medium">Operation Types:</span>
+                        <span className="ml-2 text-gray-800 font-semibold">{appTrafficData.operationTypes?.length || 0}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Comprehensive Data Summary */}
+                <div className="bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg p-6 border border-gray-200">
+                  <h6 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                    App Traffic Analysis Summary
+                  </h6>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-green-600">
+                        {appTrafficData.languages?.reduce((sum, item) => sum + item.count, 0) || 0}
+                      </div>
+                      <div className="text-sm text-gray-600 mt-1">Total Driver Connections</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Across {appTrafficData.languages?.length || 0} unique drivers
+                      </div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-green-600">
+                        {appTrafficData.ipAddresses?.reduce((sum, item) => sum + item.count, 0) || 0}
+                      </div>
+                      <div className="text-sm text-gray-600 mt-1">Total Slow Queries</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        From {appTrafficData.ipAddresses?.length || 0} unique IP addresses
+                      </div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-green-600">
+                        {appTrafficData.operationTypes?.reduce((sum, item) => sum + item.count, 0) || 0}
+                      </div>
+                      <div className="text-sm text-gray-600 mt-1">Total Operations</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Across {appTrafficData.operationTypes?.length || 0} operation types
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
-            ))}
+            )}
           </div>
-        </div> */}
+        )}
       </div>
 
       {/* Performance Insights Widget */}
       <div className="bg-white rounded-xl p-4 lg:p-6 border border-gray-300">
-        <h3 className="text-lg lg:text-xl font-semibold text-green-600 mb-4">⚡ Performance Insights</h3>
+        <h3 className="text-lg lg:text-xl font-semibold text-green-600 mb-4">Performance Insights</h3>
         
         {/* Slow Running Queries Scatter Plot */}
         <div className="mb-6 border border-green-300 rounded-lg p-1">
           <h4 className="text-green-700 font-semibold mb-3 bg-green-100 p-2 rounded">
-            🔍 Query Performance Analysis
+            Query Performance Analysis
             {queryPerformanceLoading && (
               <span className="ml-2 text-sm text-gray-600 animate-pulse">
                 🔄 Updating with new filters...
@@ -1319,86 +2731,462 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
             <div className="flex flex-wrap items-center gap-4">
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                 <label htmlFor="operationFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">Operation Type:</label>
-                <select
-                  id="operationFilter"
-                  value={operationFilter}
-                  onChange={(e) => setOperationFilter(e.target.value)}
-                  className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-auto min-w-0"
-                >
-                  <option value="">All Operations</option>
-                  {(() => {
-                    // Use originalSlowQueries for dropdown population to maintain all options
-                    const useOriginal = originalSlowQueries.length > 0;
-                    const dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
-                    
-                    if (!dataSource || dataSource.length === 0) {
-                      // console.log('🔍 No data available for Operation dropdown');
-                      return null;
-                    }
-                    
-                    // console.log(`🔍 Operation dropdown using ${useOriginal ? 'original unfiltered' : 'current analytics'} data (${dataSource.length} queries)`);
-                    
-                    const operations = Array.from(new Set(
-                      dataSource.map((query: any) => {
-                        const op = getOperationType(query);
-                        // Reduced logging to avoid spam - only log if no operation found
-                        if (!op) {
-                          // console.log('🔍 Query with no operation extracted:', { 
-                          //   hasOperation: !!query.operation,
-                          //   hasCommand: !!query.command,
-                          //   operation: query.operation,
-                          //   command: query.command,
-                          //   extractedOp: op
-                          // });
-                        }
-                        return op;
-                      }).filter((op): op is string => Boolean(op))
-                    )).sort();
-                    
-                    // console.log('🔍 Unique operations found for dropdown:', operations);
-                    
-                    return operations.map((op: string) => (
-                      <option key={op} value={op}>{op}</option>
-                    ));
-                  })()}
-                </select>
+                <div className="relative w-full sm:w-auto min-w-0" data-dropdown="operation">
+                  {/* Display selected values */}
+                  {operationFilter.length > 0 && (
+                    <div className="mb-2 flex flex-wrap gap-1">
+                      {operationFilter.map(op => (
+                        <span key={op} className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs flex items-center gap-1">
+                          {op}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOperationFilter(prev => prev.filter(o => o !== op));
+                            }}
+                            className="hover:bg-green-200 rounded-full w-4 h-4 flex items-center justify-center"
+                            title="Remove filter"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOperationFilter([]);
+                        }}
+                        className="bg-red-100 text-red-800 px-2 py-1 rounded text-xs hover:bg-red-200"
+                        title="Clear all operation filters"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Search input */}
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Search and select operations..."
+                      value={operationSearchTerm}
+                      onChange={(e) => setOperationSearchTerm(e.target.value)}
+                      onFocus={() => setShowOperationDropdown(true)}
+                      onClick={() => setShowOperationDropdown(true)}
+                      className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-green-500 w-full sm:w-64"
+                    />
+                    <button
+                      onClick={() => setShowOperationDropdown(!showOperationDropdown)}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  {/* Dropdown */}
+                  {showOperationDropdown && (
+                    <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-hidden">
+                      <div className="max-h-60 overflow-y-auto">
+                        {(() => {
+                          // Get filtered data source based on other filters (excluding operation filter)
+                          const filteredDataSource = getFilteredDataSource(['operationFilter']);
+                          
+                          if (!filteredDataSource || filteredDataSource.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No data available</div>
+                            );
+                          }
+                          
+                          // Extract unique operations
+                          const operations = Array.from(new Set(
+                            filteredDataSource.map((query: any) => {
+                              const op = getOperationType(query);
+                              return op;
+                            }).filter((op): op is string => Boolean(op))
+                          )).sort();
+                          
+                          // Filter operations based on search term
+                          const filteredOperations = operations.filter(op => 
+                            op.toLowerCase().includes(operationSearchTerm.toLowerCase())
+                          );
+                          
+                          if (filteredOperations.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No operations found matching "{operationSearchTerm}"</div>
+                            );
+                          }
+                          
+                          const otherFiltersCount = (remoteIpFilter.length > 0 ? 1 : 0) + 
+                                                  (operationFilter.length > 0 ? 1 : 0);
+                          
+                          return (
+                            <>
+                              <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const unselectedFiltered = filteredOperations.filter(op => !operationFilter.includes(op));
+                                    if (unselectedFiltered.length > 0) {
+                                      setOperationFilter(prev => [...prev, ...unselectedFiltered]);
+                                    } else {
+                                      setOperationFilter(prev => prev.filter(op => !filteredOperations.includes(op)));
+                                    }
+                                  }}
+                                  className="text-xs text-green-600 hover:text-green-800 font-medium"
+                                >
+                                  {filteredOperations.some(op => !operationFilter.includes(op)) ? 'Select All Visible' : 'Deselect All Visible'}
+                                </button>
+                                <span className="text-xs text-gray-500 ml-2">
+                                  ({filteredOperations.length} found{otherFiltersCount > 0 ? `, filtered by ${otherFiltersCount} other filter${otherFiltersCount > 1 ? 's' : ''}` : ''})
+                                </span>
+                              </div>
+                              {filteredOperations.map((op) => (
+                                <div
+                                  key={op}
+                                  className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOperationFilter(prev => 
+                                      prev.includes(op) 
+                                        ? prev.filter(o => o !== op)
+                                        : [...prev, op]
+                                    );
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={operationFilter.includes(op)}
+                                    onChange={() => {}} // Handled by parent onClick
+                                    className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2 mr-3"
+                                  />
+                                  <span className="text-sm text-gray-700 truncate flex-1">{op}</span>
+                                </div>
+                              ))}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
               
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                 <label htmlFor="namespaceFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">Namespace:</label>
-                <select
-                  id="namespaceFilter"
-                  value={namespaceFilter}
-                  onChange={(e) => setNamespaceFilter(e.target.value)}
-                  className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-auto min-w-0"
-                >
-                  <option value="">All Namespaces</option>
-                  {(() => {
-                    // Use originalSlowQueries for dropdown population to maintain all options
-                    const useOriginal = originalSlowQueries.length > 0;
-                    const dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
-                    
-                    if (!dataSource || dataSource.length === 0) {
-                      // console.log('🔍 No data available for Namespace dropdown');
-                      return null;
-                    }
-                    
-                    // console.log(`🔍 Namespace dropdown using ${useOriginal ? 'original unfiltered' : 'current analytics'} data (${dataSource.length} queries)`);
-                    
-                    const namespaces = Array.from(new Set(
-                      dataSource.map((query: any) => {
-                        // Reduced logging to avoid spam
-                        return query.namespace;
-                      }).filter(Boolean)
-                    )).sort();
-                    
-                    // console.log('🔍 Unique namespaces found for dropdown:', namespaces);
-                    
-                    return namespaces.map((ns) => (
-                      <option key={ns} value={ns}>{ns}</option>
-                    ));
-                  })()}
-                </select>
+                <div className="relative w-full sm:w-auto min-w-0" data-dropdown="namespace">
+                  {/* Display selected values */}
+                  {namespaceFilter.length > 0 && (
+                    <div className="mb-2 flex flex-wrap gap-1">
+                      {namespaceFilter.map(ns => (
+                        <span key={ns} className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs flex items-center gap-1">
+                          {ns}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setNamespaceFilter(prev => prev.filter(n => n !== ns));
+                            }}
+                            className="hover:bg-yellow-200 rounded-full w-4 h-4 flex items-center justify-center"
+                            title="Remove filter"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setNamespaceFilter([]);
+                        }}
+                        className="bg-red-100 text-red-800 px-2 py-1 rounded text-xs hover:bg-red-200"
+                        title="Clear all namespace filters"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Search input */}
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Search and select namespaces..."
+                      value={namespaceSearchTerm}
+                      onChange={(e) => setNamespaceSearchTerm(e.target.value)}
+                      onFocus={() => setShowNamespaceDropdown(true)}
+                      onClick={() => setShowNamespaceDropdown(true)}
+                      className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-64"
+                    />
+                    <button
+                      onClick={() => setShowNamespaceDropdown(!showNamespaceDropdown)}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  {/* Dropdown */}
+                  {showNamespaceDropdown && (
+                    <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-hidden">
+                      <div className="max-h-60 overflow-y-auto">
+                        {(() => {
+                          // Use originalSlowQueries for dropdown population to maintain all options
+                          const useOriginal = originalSlowQueries.length > 0;
+                          const dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
+                          
+                          if (!dataSource || dataSource.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No data available</div>
+                            );
+                          }
+                          
+                          // Get filtered data source based on other filters (excluding namespace filter)
+                          const filteredDataSource = getFilteredDataSource(['namespaceFilter']);
+                          
+                          if (!filteredDataSource || filteredDataSource.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No data available</div>
+                            );
+                          }
+                          
+                          // Extract unique namespaces
+                          const namespaces = Array.from(new Set(
+                            filteredDataSource.map((query: any) => {
+                              return query.namespace || query.attr?.ns;
+                            }).filter(Boolean)
+                          )).sort();
+                          
+                          // Filter namespaces based on search term
+                          const filteredNamespaces = namespaces.filter(ns => 
+                            ns.toLowerCase().includes(namespaceSearchTerm.toLowerCase())
+                          );
+                          
+                          if (filteredNamespaces.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No namespaces found matching "{namespaceSearchTerm}"</div>
+                            );
+                          }
+                          
+                          return (
+                            <>
+                              <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const unselectedFiltered = filteredNamespaces.filter(ns => !namespaceFilter.includes(ns));
+                                    if (unselectedFiltered.length > 0) {
+                                      setNamespaceFilter(prev => [...prev, ...unselectedFiltered]);
+                                    } else {
+                                      setNamespaceFilter(prev => prev.filter(ns => !filteredNamespaces.includes(ns)));
+                                    }
+                                  }}
+                                  className="text-xs text-yellow-600 hover:text-yellow-800 font-medium"
+                                >
+                                  {filteredNamespaces.some(ns => !namespaceFilter.includes(ns)) ? 'Select All Visible' : 'Deselect All Visible'}
+                                </button>
+                                <span className="text-xs text-gray-500 ml-2">
+                                  ({filteredNamespaces.length} found{(() => {
+                                    const otherFiltersCount = (remoteIpFilter.length > 0 ? 1 : 0) + 
+                                                            (operationFilter.length > 0 ? 1 : 0);
+                                    return otherFiltersCount > 0 ? `, filtered by ${otherFiltersCount} other filter${otherFiltersCount > 1 ? 's' : ''}` : '';
+                                  })()})
+                                </span>
+                              </div>
+                              {filteredNamespaces.map((ns) => (
+                                <div
+                                  key={ns}
+                                  className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setNamespaceFilter(prev => 
+                                      prev.includes(ns) 
+                                        ? prev.filter(n => n !== ns)
+                                        : [...prev, ns]
+                                    );
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={namespaceFilter.includes(ns)}
+                                    onChange={() => {}} // Handled by parent onClick
+                                    className="w-4 h-4 text-yellow-600 bg-white border-gray-200 rounded focus:ring-yellow-500 focus:ring-2 mr-3"
+                                  />
+                                  <span className="text-sm text-gray-700 truncate flex-1">{ns}</span>
+                                </div>
+                              ))}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <label htmlFor="remoteIpFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">Remote IP:</label>
+                <div className="relative w-full sm:w-auto min-w-0" data-dropdown="remoteip">
+                  {/* Display selected values */}
+                  {remoteIpFilter.length > 0 && (
+                    <div className="mb-2 flex flex-wrap gap-1">
+                      {remoteIpFilter.map(ip => (
+                        <span key={ip} className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs flex items-center gap-1">
+                          {ip}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRemoteIpFilter(prev => prev.filter(i => i !== ip));
+                            }}
+                            className="hover:bg-blue-200 rounded-full w-4 h-4 flex items-center justify-center"
+                            title="Remove filter"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRemoteIpFilter([]);
+                        }}
+                        className="bg-red-100 text-red-800 px-2 py-1 rounded text-xs hover:bg-red-200"
+                        title="Clear all IP filters"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Search input */}
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Search and select IP addresses..."
+                      value={remoteIpSearchTerm}
+                      onChange={(e) => setRemoteIpSearchTerm(e.target.value)}
+                      onFocus={() => {
+                        console.log('🔍 Remote IP input focused');
+                        setShowRemoteIpDropdown(true);
+                      }}
+                      onClick={() => {
+                        console.log('🔍 Remote IP input clicked');
+                        setShowRemoteIpDropdown(true);
+                      }}
+                      className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-64"
+                    />
+                    <button
+                      onClick={() => setShowRemoteIpDropdown(!showRemoteIpDropdown)}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  {/* Dropdown */}
+                  {showRemoteIpDropdown && (
+                    <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-hidden">
+                      <div className="max-h-60 overflow-y-auto">
+                        {(() => {
+                          // Use originalSlowQueries for dropdown population to maintain all options
+                          const useOriginal = originalSlowQueries.length > 0;
+                          const dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
+                          
+                          if (!dataSource || dataSource.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No data available</div>
+                            );
+                          }
+                          
+                          // Get filtered data source based on other filters (excluding remote IP filter)
+                          const filteredDataSource = getFilteredDataSource(['remoteIpFilter']);
+                          
+                          if (!filteredDataSource || filteredDataSource.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No data available</div>
+                            );
+                          }
+                          
+                          // Extract unique remote IPs and remove port numbers
+                          const remoteIps = Array.from(new Set(
+                            filteredDataSource
+                              .map((query: any) => query.remoteIP || query.attr?.remote)
+                              .filter((ip): ip is string => Boolean(ip) && typeof ip === 'string')
+                              .map((ip: string) => {
+                                // Remove port number if present (e.g., "192.168.1.1:27017" -> "192.168.1.1")
+                                return ip.includes(':') ? ip.split(':')[0] : ip;
+                              })
+                              .filter((ip): ip is string => Boolean(ip) && ip !== 'Unknown')
+                          )).sort();
+                          
+                          // Filter IPs based on search term
+                          const filteredIps = remoteIps.filter(ip => 
+                            ip.toLowerCase().includes(remoteIpSearchTerm.toLowerCase())
+                          );
+                          
+                          if (filteredIps.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No IP addresses found matching "{remoteIpSearchTerm}"</div>
+                            );
+                          }
+                          
+                          return (
+                            <>
+                              <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const unselectedFiltered = filteredIps.filter(ip => !remoteIpFilter.includes(ip));
+                                    if (unselectedFiltered.length > 0) {
+                                      setRemoteIpFilter(prev => [...prev, ...unselectedFiltered]);
+                                    } else {
+                                      setRemoteIpFilter(prev => prev.filter(ip => !filteredIps.includes(ip)));
+                                    }
+                                  }}
+                                  className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                                >
+                                  {filteredIps.some(ip => !remoteIpFilter.includes(ip)) ? 'Select All Visible' : 'Deselect All Visible'}
+                                </button>
+                                <span className="text-xs text-gray-500 ml-2">
+                                  ({filteredIps.length} found{(() => {
+                                    const otherFiltersCount = (namespaceFilter.length > 0 ? 1 : 0) + 
+                                                            (operationFilter.length > 0 ? 1 : 0);
+                                    return otherFiltersCount > 0 ? `, filtered by ${otherFiltersCount} other filter${otherFiltersCount > 1 ? 's' : ''}` : '';
+                                  })()})
+                                </span>
+                              </div>
+                              {filteredIps.map((ip) => (
+                                <div
+                                  key={ip}
+                                  className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setRemoteIpFilter(prev => 
+                                      prev.includes(ip) 
+                                        ? prev.filter(i => i !== ip)
+                                        : [...prev, ip]
+                                    );
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={remoteIpFilter.includes(ip)}
+                                    onChange={() => {}} // Handled by parent onClick
+                                    className="w-4 h-4 text-blue-600 bg-white border-gray-200 rounded focus:ring-blue-500 focus:ring-2 mr-3"
+                                  />
+                                  <span className="text-sm text-gray-700 truncate flex-1">{ip}</span>
+                                </div>
+                              ))}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
               
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
@@ -1434,6 +3222,18 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                     className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2"
                   />
                   <span>Exclude System Namespaces</span>
+                </label>
+              </div>
+              
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={collectionScansFilter}
+                    onChange={(e) => setCollectionScansFilter(e.target.checked)}
+                    className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2"
+                  />
+                  <span>Collection Scans</span>
                 </label>
               </div>
             </div>
@@ -1499,11 +3299,11 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                       </svg>
                       From:
                     </label>
-                    <div className="flex gap-2">
-                      <input
-                        id="startDate"
-                        type="date"
-                        value={startDate}
+                <div className="flex gap-2">
+                  <input
+                    id="startDate"
+                    type="date"
+                    value={startDate}
                         onChange={(e) => {
                           setStartDate(e.target.value);
                           // Reset quick date when manual date is changed
@@ -1512,10 +3312,10 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                           }
                         }}
                         className="bg-white border border-gray-300 rounded-lg px-4 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm w-full sm:w-auto"
-                      />
-                      <input
-                        type="time"
-                        value={startTime}
+                  />
+                  <input
+                    type="time"
+                    value={startTime}
                         onChange={(e) => {
                           setStartTime(e.target.value);
                           // Reset quick date when manual time is changed
@@ -1524,10 +3324,10 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                           }
                         }}
                         className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm w-full sm:w-auto"
-                        step="1"
-                      />
-                    </div>
-                  </div>
+                    step="1"
+                  />
+                </div>
+              </div>
                   
                   <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                     <label htmlFor="endDate" className="text-sm font-medium text-gray-700 whitespace-nowrap flex items-center gap-2">
@@ -1536,11 +3336,11 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                       </svg>
                       To:
                     </label>
-                    <div className="flex gap-2">
-                      <input
-                        id="endDate"
-                        type="date"
-                        value={endDate}
+                <div className="flex gap-2">
+                  <input
+                    id="endDate"
+                    type="date"
+                    value={endDate}
                         onChange={(e) => {
                           setEndDate(e.target.value);
                           // Reset quick date when manual date is changed
@@ -1549,10 +3349,10 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                           }
                         }}
                         className="bg-white border border-gray-300 rounded-lg px-4 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm w-full sm:w-auto"
-                      />
-                      <input
-                        type="time"
-                        value={endTime}
+                  />
+                  <input
+                    type="time"
+                    value={endTime}
                         onChange={(e) => {
                           setEndTime(e.target.value);
                           // Reset quick date when manual time is changed
@@ -1561,10 +3361,10 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                           }
                         }}
                         className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm w-full sm:w-auto"
-                        step="1"
-                      />
-                    </div>
-                  </div>
+                    step="1"
+                  />
+                </div>
+              </div>
                   
                   {/* Clear Manual Filters Button */}
                   {(startDate || endDate || startTime || endTime) && (
@@ -1583,7 +3383,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                       Clear Date & Time
                     </button>
                   )}
-                </div>
+            </div>
               </div>
             )}
             
@@ -2018,12 +3818,1015 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
         </div>
       </div>
 
+      {/* Query Hash Analysis Widget */}
+      <div className="bg-white rounded-xl p-4 lg:p-6 border border-gray-300">
+        <h3 className="text-lg lg:text-xl font-semibold text-green-600 mb-4">Query Hash Analysis</h3>
+        <p className="text-gray-600 text-sm mb-4">
+          Analysis of slow queries grouped by query hash, with multiple analysis perspectives.
+        </p>
+        
+        {/* Tab Navigation */}
+        <div className="mb-6">
+          <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setQueryHashActiveTab('duration')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  queryHashActiveTab === 'duration'
+                    ? 'border-green-500 text-green-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Duration Analysis
+              </button>
+              <button
+                onClick={() => setQueryHashActiveTab('dataRead')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  queryHashActiveTab === 'dataRead'
+                    ? 'border-green-500 text-green-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Disk Read Analysis
+              </button>
+              <button
+                onClick={() => setQueryHashActiveTab('yields')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  queryHashActiveTab === 'yields'
+                    ? 'border-green-500 text-green-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Yields/CPU Context Switching Analysis
+              </button>
+            </nav>
+            </div>
+        </div>
+
+        {/* Duration Analysis Tab */}
+        {queryHashActiveTab === 'duration' && (
+          <>
+            <div className="mb-4">
+              <p className="text-gray-600 text-sm">
+                Performance statistics showing frequency and duration percentiles for each query pattern.
+              </p>
+            </div>
+            
+            {queryHashAnalysis.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full bg-white border border-gray-200 rounded-lg">
+              <thead className="bg-green-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200">
+                    Query Hash
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200">
+                    Namespace
+                  </th>
+                  <th 
+                    className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
+                    onClick={() => handleQueryHashSort('count')}
+                  >
+                    <div className="flex items-center space-x-1">
+                      <span>Count</span>
+                      {queryHashSortField === 'count' && (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          {queryHashSortDirection === 'asc' ? (
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                          ) : (
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          )}
+                        </svg>
+          )}
+        </div>
+                  </th>
+                  <th 
+                    className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
+                    onClick={() => handleQueryHashSort('avgDurationSeconds')}
+                  >
+                    <div className="flex items-center space-x-1">
+                      <span>Avg Duration (s)</span>
+                      {queryHashSortField === 'avgDurationSeconds' && (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          {queryHashSortDirection === 'asc' ? (
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                          ) : (
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          )}
+                        </svg>
+                      )}
+                    </div>
+                  </th>
+                  <th 
+                    className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
+                    onClick={() => handleQueryHashSort('p90DurationSeconds')}
+                  >
+                    <div className="flex items-center space-x-1">
+                      <span>P90 Duration (s)</span>
+                      {queryHashSortField === 'p90DurationSeconds' && (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          {queryHashSortDirection === 'asc' ? (
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                          ) : (
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          )}
+                        </svg>
+                      )}
+                    </div>
+                  </th>
+                  <th 
+                    className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
+                    onClick={() => handleQueryHashSort('p95DurationSeconds')}
+                  >
+                    <div className="flex items-center space-x-1">
+                      <span>P95 Duration (s)</span>
+                      {queryHashSortField === 'p95DurationSeconds' && (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          {queryHashSortDirection === 'asc' ? (
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                          ) : (
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          )}
+                        </svg>
+                      )}
+                    </div>
+                  </th>
+                  <th 
+                    className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
+                    onClick={() => handleQueryHashSort('p99DurationSeconds')}
+                  >
+                    <div className="flex items-center space-x-1">
+                      <span>P99 Duration (s)</span>
+                      {queryHashSortField === 'p99DurationSeconds' && (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          {queryHashSortDirection === 'asc' ? (
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                          ) : (
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          )}
+                        </svg>
+                      )}
+                    </div>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {paginatedQueryHashData.map((analysis, index) => (
+                  <tr 
+                    key={analysis.queryHash} 
+                    className="hover:bg-green-50 cursor-pointer transition-colors"
+                    onClick={() => handleQueryHashClick(analysis.queryHash)}
+                    title="Click to view a sample query with this hash"
+                  >
+                    <td className="px-4 py-3 text-sm font-mono text-gray-900 max-w-xs">
+                      <div className="flex items-center space-x-2">
+                        <div className="truncate" title={analysis.queryHash}>
+                          {analysis.queryHash.substring(0, 16)}...
+                        </div>
+                        <svg className="w-4 h-4 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-900 max-w-xs">
+                      <div className="truncate" title={analysis.namespace || 'N/A'}>
+                        {analysis.namespace || 'N/A'}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-900">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        {analysis.count.toLocaleString()}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-900">
+                      {analysis.avgDurationSeconds.toFixed(3)}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-900">
+                      {analysis.p90DurationSeconds.toFixed(3)}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-900">
+                      {analysis.p95DurationSeconds.toFixed(3)}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-900">
+                      <span className={`font-medium ${
+                        analysis.p99DurationSeconds > 10 ? 'text-red-600' : 
+                        analysis.p99DurationSeconds > 5 ? 'text-yellow-600' : 
+                        'text-green-600'
+                      }`}>
+                        {analysis.p99DurationSeconds.toFixed(3)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            
+            {/* Pagination Controls */}
+            {queryHashTotalPages > 1 && (
+              <div className="mt-6 flex flex-col sm:flex-row justify-between items-center gap-4">
+                {/* Pagination Info */}
+                <div className="text-sm text-gray-600">
+                  Showing {((queryHashCurrentPage - 1) * queryHashItemsPerPage) + 1} to {Math.min(queryHashCurrentPage * queryHashItemsPerPage, sortedQueryHashAnalysis.length)} of {sortedQueryHashAnalysis.length.toLocaleString()} query hashes
+                  {queryHashSortField !== 'count' || queryHashSortDirection !== 'desc' ? (
+                    <span className="ml-1">
+                      (sorted by {queryHashSortField === 'avgDurationSeconds' ? 'Avg Duration' : 
+                                queryHashSortField === 'p90DurationSeconds' ? 'P90 Duration' :
+                                queryHashSortField === 'p95DurationSeconds' ? 'P95 Duration' :
+                                queryHashSortField === 'p99DurationSeconds' ? 'P99 Duration' : 
+                                'Count'} {queryHashSortDirection === 'asc' ? '↑' : '↓'})
+                    </span>
+                  ) : null}
+                </div>
+                
+                {/* Pagination Buttons */}
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={handleQueryHashPrevPage}
+                    disabled={queryHashCurrentPage === 1}
+                    className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Previous
+                  </button>
+                  
+                  {/* Page Numbers */}
+                  <div className="flex items-center space-x-1">
+                    {(() => {
+                      const pages = [];
+                      const showPages = 5; // Show 5 page numbers
+                      let startPage = Math.max(1, queryHashCurrentPage - Math.floor(showPages / 2));
+                      let endPage = Math.min(queryHashTotalPages, startPage + showPages - 1);
+                      
+                      // Adjust start if we're near the end
+                      if (endPage - startPage < showPages - 1) {
+                        startPage = Math.max(1, endPage - showPages + 1);
+                      }
+                      
+                      // Show first page if not in range
+                      if (startPage > 1) {
+                        pages.push(
+                          <button
+                            key={1}
+                            onClick={() => handleQueryHashPageChange(1)}
+                            className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                          >
+                            1
+                          </button>
+                        );
+                        if (startPage > 2) {
+                          pages.push(<span key="ellipsis1" className="px-2 text-gray-500">...</span>);
+                        }
+                      }
+                      
+                      // Show page numbers in range
+                      for (let i = startPage; i <= endPage; i++) {
+                        pages.push(
+                          <button
+                            key={i}
+                            onClick={() => handleQueryHashPageChange(i)}
+                            className={`px-3 py-2 text-sm font-medium rounded-md ${
+                              i === queryHashCurrentPage
+                                ? 'text-white bg-green-600 border border-green-600'
+                                : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                            }`}
+                          >
+                            {i}
+                          </button>
+                        );
+                      }
+                      
+                      // Show last page if not in range
+                      if (endPage < queryHashTotalPages) {
+                        if (endPage < queryHashTotalPages - 1) {
+                          pages.push(<span key="ellipsis2" className="px-2 text-gray-500">...</span>);
+                        }
+                        pages.push(
+                          <button
+                            key={queryHashTotalPages}
+                            onClick={() => handleQueryHashPageChange(queryHashTotalPages)}
+                            className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                          >
+                            {queryHashTotalPages}
+                          </button>
+                        );
+                      }
+                      
+                      return pages;
+                    })()}
+                  </div>
+                  
+                  <button
+                    onClick={handleQueryHashNextPage}
+                    disabled={queryHashCurrentPage === queryHashTotalPages}
+                    className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+            
+            {/* Single page summary */}
+            {queryHashTotalPages <= 1 && sortedQueryHashAnalysis.length > 0 && (
+              <div className="mt-4 text-center">
+                <p className="text-sm text-gray-600">
+                  Showing all {sortedQueryHashAnalysis.length.toLocaleString()} query hashes
+                  {queryHashSortField !== 'count' || queryHashSortDirection !== 'desc' ? (
+                    <span className="ml-1">
+                      (sorted by {queryHashSortField === 'avgDurationSeconds' ? 'Avg Duration' : 
+                                queryHashSortField === 'p90DurationSeconds' ? 'P90 Duration' :
+                                queryHashSortField === 'p95DurationSeconds' ? 'P95 Duration' :
+                                queryHashSortField === 'p99DurationSeconds' ? 'P99 Duration' : 
+                                'Count'} {queryHashSortDirection === 'asc' ? '↑' : '↓'})
+                    </span>
+                  ) : null}
+                </p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="bg-gray-50 rounded-lg p-6 text-center">
+            <div className="text-gray-500 mb-2">
+              <svg className="w-12 h-12 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              <h4 className="font-medium text-gray-900 mb-1">No Query Hash Data Available</h4>
+              <p className="text-sm">No slow queries with query hashes found for analysis.</p>
+            </div>
+          </div>
+        )}
+        
+        <div className="mt-4 text-xs text-gray-500">
+          <p><strong>Note:</strong> Statistics are calculated from slow queries that contain queryHash values. 
+          Duration percentiles help identify performance outliers for each query pattern.</p>
+          <p className="mt-1"><strong>💡 Tips:</strong></p>
+          <ul className="mt-1 ml-4 list-disc">
+            <li>Click on any row to view detailed information for a sample query with that hash</li>
+            <li>Click on column headers (except Query Hash) to sort the data</li>
+            <li>Default sorting is by Count (descending) to show most frequent query patterns first</li>
+            <li>Use pagination controls to navigate through all query hashes (30 per page)</li>
+          </ul>
+        </div>
+            </>
+        )}
+
+        {/* Data Read Analysis Tab */}
+        {queryHashActiveTab === 'dataRead' && (
+          <>
+            <div className="mb-4">
+              <p className="text-gray-600 text-sm">
+                Data I/O statistics showing how much data each query pattern reads from disk.
+              </p>
+            </div>
+            
+            {queryHashDataAnalysis.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="min-w-full bg-white border border-gray-200 rounded-lg">
+                  <thead className="bg-green-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200">
+                        Query Hash
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200">
+                        Namespace
+                      </th>
+                      <th 
+                        className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
+                        onClick={() => handleQueryHashDataSort('count')}
+                      >
+                        <div className="flex items-center space-x-1">
+                          <span>Count</span>
+                          {queryHashDataSortField === 'count' && (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              {queryHashDataSortDirection === 'asc' ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                              ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              )}
+                            </svg>
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
+                        onClick={() => handleQueryHashDataSort('avgDataReadMB')}
+                      >
+                        <div className="flex items-center space-x-1">
+                          <span>Avg Data Read (MB)</span>
+                          {queryHashDataSortField === 'avgDataReadMB' && (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              {queryHashDataSortDirection === 'asc' ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                              ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              )}
+                            </svg>
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
+                        onClick={() => handleQueryHashDataSort('maxDataReadMB')}
+                      >
+                        <div className="flex items-center space-x-1">
+                          <span>Max Data Read (MB)</span>
+                          {queryHashDataSortField === 'maxDataReadMB' && (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              {queryHashDataSortDirection === 'asc' ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                              ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              )}
+                            </svg>
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
+                        onClick={() => handleQueryHashDataSort('minDataReadMB')}
+                      >
+                        <div className="flex items-center space-x-1">
+                          <span>Min Data Read (MB)</span>
+                          {queryHashDataSortField === 'minDataReadMB' && (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              {queryHashDataSortDirection === 'asc' ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                              ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              )}
+                            </svg>
+                          )}
+                        </div>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {paginatedQueryHashDataAnalysis.map((analysis, index) => (
+                      <tr 
+                        key={analysis.queryHash} 
+                        className="hover:bg-green-50 cursor-pointer transition-colors"
+                        onClick={() => handleQueryHashClick(analysis.queryHash)}
+                        title="Click to view a sample query with this hash"
+                      >
+                        <td className="px-4 py-3 text-sm font-mono text-gray-900 max-w-xs">
+                          <div className="flex items-center space-x-2">
+                            <div className="truncate" title={analysis.queryHash}>
+                              {analysis.queryHash.substring(0, 16)}...
+                            </div>
+                            <svg className="w-4 h-4 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900 max-w-xs">
+                          <div className="truncate" title={analysis.namespace || 'N/A'}>
+                            {analysis.namespace || 'N/A'}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            {analysis.count.toLocaleString()}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          {analysis.avgDataReadMB.toFixed(3)} MB
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          <span className={`font-medium ${
+                            analysis.maxDataReadMB > 100 ? 'text-red-600' : 
+                            analysis.maxDataReadMB > 50 ? 'text-yellow-600' : 
+                            'text-green-600'
+                          }`}>
+                            {analysis.maxDataReadMB.toFixed(3)} MB
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          {analysis.minDataReadMB.toFixed(3)} MB
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                
+                {/* Data Read Pagination Controls */}
+                {queryHashDataTotalPages > 1 && (
+                  <div className="mt-6 flex flex-col sm:flex-row justify-between items-center gap-4">
+                    {/* Pagination Info */}
+                    <div className="text-sm text-gray-600">
+                      Showing {((queryHashDataCurrentPage - 1) * queryHashDataItemsPerPage) + 1} to {Math.min(queryHashDataCurrentPage * queryHashDataItemsPerPage, sortedQueryHashDataAnalysis.length)} of {sortedQueryHashDataAnalysis.length.toLocaleString()} query hashes
+                      {queryHashDataSortField !== 'count' || queryHashDataSortDirection !== 'desc' ? (
+                        <span className="ml-1">
+                          (sorted by {queryHashDataSortField === 'avgDataReadMB' ? 'Avg Data Read' : 
+                                    queryHashDataSortField === 'maxDataReadMB' ? 'Max Data Read' :
+                                    queryHashDataSortField === 'minDataReadMB' ? 'Min Data Read' :
+                                    'Count'} {queryHashDataSortDirection === 'asc' ? '↑' : '↓'})
+                        </span>
+                      ) : null}
+                    </div>
+                    
+                    {/* Pagination Buttons */}
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={handleQueryHashDataPrevPage}
+                        disabled={queryHashDataCurrentPage === 1}
+                        className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      
+                      {/* Page Numbers - Similar to duration analysis */}
+                      <div className="flex items-center space-x-1">
+                        {(() => {
+                          const pages = [];
+                          const showPages = 5;
+                          let startPage = Math.max(1, queryHashDataCurrentPage - Math.floor(showPages / 2));
+                          let endPage = Math.min(queryHashDataTotalPages, startPage + showPages - 1);
+                          
+                          if (endPage - startPage < showPages - 1) {
+                            startPage = Math.max(1, endPage - showPages + 1);
+                          }
+                          
+                          if (startPage > 1) {
+                            pages.push(
+                              <button
+                                key={1}
+                                onClick={() => handleQueryHashDataPageChange(1)}
+                                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                              >
+                                1
+                              </button>
+                            );
+                            if (startPage > 2) {
+                              pages.push(<span key="ellipsis1" className="px-2 text-gray-500">...</span>);
+                            }
+                          }
+                          
+                          for (let i = startPage; i <= endPage; i++) {
+                            pages.push(
+                              <button
+                                key={i}
+                                onClick={() => handleQueryHashDataPageChange(i)}
+                                className={`px-3 py-2 text-sm font-medium rounded-md ${
+                                  i === queryHashDataCurrentPage
+                                    ? 'text-white bg-green-600 border border-green-600'
+                                    : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                                }`}
+                              >
+                                {i}
+                              </button>
+                            );
+                          }
+                          
+                          if (endPage < queryHashDataTotalPages) {
+                            if (endPage < queryHashDataTotalPages - 1) {
+                              pages.push(<span key="ellipsis2" className="px-2 text-gray-500">...</span>);
+                            }
+                            pages.push(
+                              <button
+                                key={queryHashDataTotalPages}
+                                onClick={() => handleQueryHashDataPageChange(queryHashDataTotalPages)}
+                                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                              >
+                                {queryHashDataTotalPages}
+                              </button>
+                            );
+                          }
+                          
+                          return pages;
+                        })()}
+                      </div>
+                      
+                      <button
+                        onClick={handleQueryHashDataNextPage}
+                        disabled={queryHashDataCurrentPage === queryHashDataTotalPages}
+                        className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Single page summary for data read */}
+                {queryHashDataTotalPages <= 1 && sortedQueryHashDataAnalysis.length > 0 && (
+                  <div className="mt-4 text-center">
+                    <p className="text-sm text-gray-600">
+                      Showing all {sortedQueryHashDataAnalysis.length.toLocaleString()} query hashes
+                      {queryHashDataSortField !== 'count' || queryHashDataSortDirection !== 'desc' ? (
+                        <span className="ml-1">
+                          (sorted by {queryHashDataSortField === 'avgDataReadMB' ? 'Avg Data Read' : 
+                                    queryHashDataSortField === 'maxDataReadMB' ? 'Max Data Read' :
+                                    queryHashDataSortField === 'minDataReadMB' ? 'Min Data Read' :
+                                    'Count'} {queryHashDataSortDirection === 'asc' ? '↑' : '↓'})
+                        </span>
+                      ) : null}
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="bg-gray-50 rounded-lg p-6 text-center">
+                <div className="text-gray-500 mb-2">
+                  <svg className="w-12 h-12 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 1.79 4 4 4h8c2.21 0 4-1.79 4-4V7M4 7V4a1 1 0 011-1h4l2 2h4a1 1 0 011 1v1M4 7h16" />
+                  </svg>
+                  <h4 className="font-medium text-gray-900 mb-1">No Data Read Information Available</h4>
+                  <p className="text-sm">No slow queries with data read information found for analysis.</p>
+                </div>
+              </div>
+            )}
+            
+            <div className="mt-4 text-xs text-gray-500">
+              <p><strong>Note:</strong> Statistics are calculated from slow queries that contain dataReadMB values. 
+              This helps identify queries that perform heavy disk I/O operations.</p>
+              <p className="mt-1"><strong>💡 Tips:</strong></p>
+              <ul className="mt-1 ml-4 list-disc">
+                <li>Click on any row to view detailed information for a sample query with that hash</li>
+                <li>Click on column headers (except Query Hash) to sort the data</li>
+                <li>Higher Max Data Read values indicate queries that may cause I/O bottlenecks</li>
+                <li>Use pagination controls to navigate through all query hashes (30 per page)</li>
+              </ul>
+            </div>
+          </>
+        )}
+
+        {/* Yields Analysis Tab */}
+        {queryHashActiveTab === 'yields' && (
+          <>
+            <div className="mb-4">
+              <p className="text-gray-600 text-sm">
+                Query yields statistics showing how often queries yield control, indicating contention and blocking.
+              </p>
+            </div>
+            
+            {queryHashYieldsAnalysis.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="min-w-full bg-white border border-gray-200 rounded-lg">
+                  <thead className="bg-green-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200">
+                        Query Hash
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200">
+                        Namespace
+                      </th>
+                      <th 
+                        className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
+                        onClick={() => handleQueryHashYieldsSort('count')}
+                      >
+                        <div className="flex items-center space-x-1">
+                          <span>Count</span>
+                          {queryHashYieldsSortField === 'count' && (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              {queryHashYieldsSortDirection === 'asc' ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                              ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              )}
+                            </svg>
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
+                        onClick={() => handleQueryHashYieldsSort('avgYields')}
+                      >
+                        <div className="flex items-center space-x-1">
+                          <span>Avg Yields</span>
+                          {queryHashYieldsSortField === 'avgYields' && (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              {queryHashYieldsSortDirection === 'asc' ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                              ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              )}
+                            </svg>
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
+                        onClick={() => handleQueryHashYieldsSort('maxYields')}
+                      >
+                        <div className="flex items-center space-x-1">
+                          <span>Max Yields</span>
+                          {queryHashYieldsSortField === 'maxYields' && (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              {queryHashYieldsSortDirection === 'asc' ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                              ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              )}
+                            </svg>
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-3 text-left text-xs font-medium text-green-800 uppercase tracking-wider border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
+                        onClick={() => handleQueryHashYieldsSort('minYields')}
+                      >
+                        <div className="flex items-center space-x-1">
+                          <span>Min Yields</span>
+                          {queryHashYieldsSortField === 'minYields' && (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              {queryHashYieldsSortDirection === 'asc' ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                              ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              )}
+                            </svg>
+                          )}
+                        </div>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {paginatedQueryHashYieldsAnalysis.map((analysis, index) => (
+                      <tr 
+                        key={analysis.queryHash} 
+                        className="hover:bg-green-50 cursor-pointer transition-colors"
+                        onClick={() => handleQueryHashClick(analysis.queryHash)}
+                        title="Click to view a sample query with this hash"
+                      >
+                        <td className="px-4 py-3 text-sm font-mono text-gray-900 max-w-xs">
+                          <div className="flex items-center space-x-2">
+                            <div className="truncate" title={analysis.queryHash}>
+                              {analysis.queryHash.substring(0, 16)}...
+                            </div>
+                            <svg className="w-4 h-4 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900 max-w-xs">
+                          <div className="truncate" title={analysis.namespace || 'N/A'}>
+                            {analysis.namespace || 'N/A'}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            {analysis.count.toLocaleString()}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          {analysis.avgYields.toFixed(2)}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          <span className={`font-medium ${
+                            analysis.maxYields > 1000 ? 'text-red-600' : 
+                            analysis.maxYields > 100 ? 'text-yellow-600' : 
+                            'text-green-600'
+                          }`}>
+                            {analysis.maxYields.toLocaleString()}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          {analysis.minYields.toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                
+                {/* Yields Pagination Controls */}
+                {queryHashYieldsTotalPages > 1 && (
+                  <div className="mt-6 flex flex-col sm:flex-row justify-between items-center gap-4">
+                    {/* Pagination Info */}
+                    <div className="text-sm text-gray-600">
+                      Showing {((queryHashYieldsCurrentPage - 1) * queryHashYieldsItemsPerPage) + 1} to {Math.min(queryHashYieldsCurrentPage * queryHashYieldsItemsPerPage, sortedQueryHashYieldsAnalysis.length)} of {sortedQueryHashYieldsAnalysis.length.toLocaleString()} query hashes
+                      {queryHashYieldsSortField !== 'count' || queryHashYieldsSortDirection !== 'desc' ? (
+                        <span className="ml-1">
+                          (sorted by {queryHashYieldsSortField === 'avgYields' ? 'Avg Yields' : 
+                                    queryHashYieldsSortField === 'maxYields' ? 'Max Yields' :
+                                    queryHashYieldsSortField === 'minYields' ? 'Min Yields' :
+                                    'Count'} {queryHashYieldsSortDirection === 'asc' ? '↑' : '↓'})
+                        </span>
+                      ) : null}
+                    </div>
+                    
+                    {/* Pagination Buttons */}
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={handleQueryHashYieldsPrevPage}
+                        disabled={queryHashYieldsCurrentPage === 1}
+                        className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      
+                      {/* Page Numbers - Similar to other analyses */}
+                      <div className="flex items-center space-x-1">
+                        {(() => {
+                          const pages = [];
+                          const showPages = 5;
+                          let startPage = Math.max(1, queryHashYieldsCurrentPage - Math.floor(showPages / 2));
+                          let endPage = Math.min(queryHashYieldsTotalPages, startPage + showPages - 1);
+                          
+                          if (endPage - startPage < showPages - 1) {
+                            startPage = Math.max(1, endPage - showPages + 1);
+                          }
+                          
+                          if (startPage > 1) {
+                            pages.push(
+                              <button
+                                key={1}
+                                onClick={() => handleQueryHashYieldsPageChange(1)}
+                                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                              >
+                                1
+                              </button>
+                            );
+                            if (startPage > 2) {
+                              pages.push(<span key="ellipsis1" className="px-2 text-gray-500">...</span>);
+                            }
+                          }
+                          
+                          for (let i = startPage; i <= endPage; i++) {
+                            pages.push(
+                              <button
+                                key={i}
+                                onClick={() => handleQueryHashYieldsPageChange(i)}
+                                className={`px-3 py-2 text-sm font-medium rounded-md ${
+                                  i === queryHashYieldsCurrentPage
+                                    ? 'text-white bg-green-600 border border-green-600'
+                                    : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                                }`}
+                              >
+                                {i}
+                              </button>
+                            );
+                          }
+                          
+                          if (endPage < queryHashYieldsTotalPages) {
+                            if (endPage < queryHashYieldsTotalPages - 1) {
+                              pages.push(<span key="ellipsis2" className="px-2 text-gray-500">...</span>);
+                            }
+                            pages.push(
+                              <button
+                                key={queryHashYieldsTotalPages}
+                                onClick={() => handleQueryHashYieldsPageChange(queryHashYieldsTotalPages)}
+                                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                              >
+                                {queryHashYieldsTotalPages}
+                              </button>
+                            );
+                          }
+                          
+                          return pages;
+                        })()}
+                      </div>
+                      
+                      <button
+                        onClick={handleQueryHashYieldsNextPage}
+                        disabled={queryHashYieldsCurrentPage === queryHashYieldsTotalPages}
+                        className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Single page summary for yields */}
+                {queryHashYieldsTotalPages <= 1 && sortedQueryHashYieldsAnalysis.length > 0 && (
+                  <div className="mt-4 text-center">
+                    <p className="text-sm text-gray-600">
+                      Showing all {sortedQueryHashYieldsAnalysis.length.toLocaleString()} query hashes
+                      {queryHashYieldsSortField !== 'count' || queryHashYieldsSortDirection !== 'desc' ? (
+                        <span className="ml-1">
+                          (sorted by {queryHashYieldsSortField === 'avgYields' ? 'Avg Yields' : 
+                                    queryHashYieldsSortField === 'maxYields' ? 'Max Yields' :
+                                    queryHashYieldsSortField === 'minYields' ? 'Min Yields' :
+                                    'Count'} {queryHashYieldsSortDirection === 'asc' ? '↑' : '↓'})
+                        </span>
+                      ) : null}
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="bg-gray-50 rounded-lg p-6 text-center">
+                <div className="text-gray-500 mb-2">
+                  <svg className="w-12 h-12 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                  </svg>
+                  <h4 className="font-medium text-gray-900 mb-1">No Yields Information Available</h4>
+                  <p className="text-sm">No slow queries with yields information found for analysis.</p>
+                </div>
+              </div>
+            )}
+            
+            <div className="mt-4 text-xs text-gray-500">
+              <p><strong>Note:</strong> Statistics are calculated from slow queries that contain numYields values. 
+              Higher yields indicate more contention and blocking during query execution.</p>
+              <p className="mt-1"><strong>💡 Tips:</strong></p>
+              <ul className="mt-1 ml-4 list-disc">
+                <li>Click on any row to view detailed information for a sample query with that hash</li>
+                <li>Click on column headers (except Query Hash) to sort the data</li>
+                <li>Higher Max Yields values indicate queries that face significant contention</li>
+                <li>Use pagination controls to navigate through all query hashes (30 per page)</li>
+              </ul>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Authentication Events Widget */}
+      <div className="bg-white rounded-xl p-6 border border-gray-300">
+        <h3 className="text-xl font-semibold text-purple-600 mb-4">🔐 Authentication Events</h3>
+        <div className="space-y-3 max-h-64 overflow-y-auto">
+          {analytics.authEvents.length > 0 ? (
+            analytics.authEvents.map((auth, index) => (
+              <div key={index} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <p className="text-gray-700 text-sm">{auth._id.type}</p>
+                    {auth._id.user && (
+                      <p className="text-blue-600 text-sm">
+                        User: {typeof auth._id.user === 'object' ? JSON.stringify(auth._id.user) : auth._id.user}
+                      </p>
+                    )}
+                    {auth._id.source && (
+                      <p className="text-gray-600 text-sm font-mono">
+                        From: {typeof auth._id.source === 'object' ? JSON.stringify(auth._id.source) : auth._id.source}
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right text-sm">
+                    <div className="text-purple-400 font-semibold">{auth.count}x</div>
+                    <div className="text-gray-600">{formatTimestamp(auth.lastSeen)}</div>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="text-gray-600">No authentication events found.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Index Usage Widget */}
+      <div className="bg-white rounded-xl p-6 border border-gray-300">
+        <h3 className="text-xl font-semibold text-cyan-600 mb-4">📈 Index Usage Patterns</h3>
+        <div className="space-y-3 max-h-64 overflow-y-auto">
+          {analytics.indexUsage.length > 0 ? (
+            analytics.indexUsage.map((usage, index) => (
+              <div key={index} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <p className="text-gray-700 text-sm font-mono">{usage._id || 'Unknown Plan'}</p>
+                    <p className="text-gray-600 text-xs">
+                      Collections: {usage.collections && Array.isArray(usage.collections) ? usage.collections.join(', ') : 'N/A'}
+                    </p>
+                  </div>
+                  <div className="text-cyan-400 font-semibold">{usage.count}x</div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="text-gray-600">No index usage patterns detected.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Server Health Widget */}
+      <div className="bg-white rounded-xl p-6 border border-gray-300">
+        <h3 className="text-xl font-semibold text-orange-600 mb-4">🏥 Server Health Events</h3>
+        <div className="space-y-3 max-h-64 overflow-y-auto">
+          {analytics.healthEvents.length > 0 ? (
+            analytics.healthEvents.map((health, index) => (
+              <div key={index} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2">
+                      <span className={`font-mono text-sm px-2 py-1 rounded ${getSeverityColor(health.severity)}`}>
+                        {health.severity}
+                      </span>
+                      <span className="text-orange-400 text-sm">{health.component}</span>
+                      <span className="text-gray-600 text-sm">{health.context}</span>
+                    </div>
+                    <p className="text-gray-700 text-sm mt-1">{health.message}</p>
+                  </div>
+                  <div className="text-gray-600 text-sm">{formatTimestamp(health.timestamp)}</div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="text-gray-600">No significant server health events.</p>
+          )}
+        </div>
+      </div>
+
+
+
       {/* Timeline Analysis Widget */}
       <div className="bg-white rounded-xl p-4 lg:p-6 border border-gray-300">
-        <h3 className="text-lg lg:text-xl font-semibold text-green-600 mb-4">⏰ Timeline Analysis</h3>
+        <h3 className="text-lg lg:text-xl font-semibold text-green-600 mb-4">Timeline Analysis</h3>
         
         <div className="mb-6 border border-green-300 rounded-lg p-4">
-          <h4 className="text-green-700 font-semibold mb-3">🕐 Queries Running at Specific Time</h4>
+          <h4 className="text-green-700 font-semibold mb-3">Queries Running at Specific Time</h4>
           
           {/* Timestamp Input Section */}
           <div className="mb-4 bg-gray-50 rounded-lg p-3 border border-gray-200">
@@ -2072,7 +4875,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                 </button>
                 <div className="text-sm text-gray-600 space-y-1">
                   <div>
-                    Found: {timelineQueries.length} concurrent queries{timelineOperationFilter ? ` (${timelineOperationFilter} operations)` : ''}
+                  Found: {timelineQueries.length} concurrent queries{timelineOperationFilter ? ` (${timelineOperationFilter} operations)` : ''}
                   </div>
                   <div className="text-xs text-green-600">
                     💡 Analysis updates automatically when timestamp changes
@@ -2157,6 +4960,173 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                       Clear Filter
                     </button>
                   )}
+                </div>
+              </div>
+              
+              {/* Remote IP Filter for Timeline */}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <label htmlFor="timelineRemoteIpFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                    Remote IP:
+                  </label>
+                  <div className="relative w-full sm:w-auto min-w-0" data-dropdown="timeline-remoteip">
+                    {/* Display selected values */}
+                    {timelineRemoteIpFilter.length > 0 && (
+                      <div className="mb-2 flex flex-wrap gap-1">
+                        {timelineRemoteIpFilter.map(ip => (
+                          <span key={ip} className="bg-purple-100 text-purple-800 px-2 py-1 rounded text-xs flex items-center gap-1">
+                            {ip}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTimelineRemoteIpFilter(prev => prev.filter(i => i !== ip));
+                                if (selectedTimestamp) {
+                                  analyzeQueriesAtTimestamp(selectedTimestamp);
+                                }
+                              }}
+                              className="hover:bg-purple-200 rounded-full w-4 h-4 flex items-center justify-center"
+                              title="Remove filter"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setTimelineRemoteIpFilter([]);
+                            if (selectedTimestamp) {
+                              analyzeQueriesAtTimestamp(selectedTimestamp);
+                            }
+                          }}
+                          className="bg-red-100 text-red-800 px-2 py-1 rounded text-xs hover:bg-red-200"
+                          title="Clear all IP filters"
+                        >
+                          Clear All
+                        </button>
+                      </div>
+                    )}
+                    
+                    {/* Search input */}
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Search and select IP addresses..."
+                        value={timelineRemoteIpSearchTerm}
+                        onChange={(e) => setTimelineRemoteIpSearchTerm(e.target.value)}
+                        onFocus={() => setShowTimelineRemoteIpDropdown(true)}
+                        onClick={() => setShowTimelineRemoteIpDropdown(true)}
+                        className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500 w-full sm:w-64"
+                      />
+                      <button
+                        onClick={() => setShowTimelineRemoteIpDropdown(!showTimelineRemoteIpDropdown)}
+                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                    </div>
+                    
+                    {/* Dropdown */}
+                    {showTimelineRemoteIpDropdown && (
+                      <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-hidden">
+                        <div className="max-h-60 overflow-y-auto">
+                          {(() => {
+                            // Use originalSlowQueries for dropdown population to maintain all options
+                            const useOriginal = originalSlowQueries.length > 0;
+                            const dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
+                            
+                            if (!dataSource || dataSource.length === 0) {
+                              return (
+                                <div className="p-3 text-sm text-gray-500">No data available</div>
+                              );
+                            }
+                            
+                            // Extract unique remote IPs and remove port numbers
+                            const remoteIps = Array.from(new Set(
+                              dataSource
+                                .map((query: any) => query.remoteIP || query.attr?.remote)
+                                .filter((ip): ip is string => Boolean(ip) && typeof ip === 'string')
+                                .map((ip: string) => {
+                                  // Remove port number if present (e.g., "192.168.1.1:27017" -> "192.168.1.1")
+                                  return ip.includes(':') ? ip.split(':')[0] : ip;
+                                })
+                                .filter((ip): ip is string => Boolean(ip) && ip !== 'Unknown')
+                            )).sort();
+                            
+                            // Filter IPs based on search term
+                            const filteredIps = remoteIps.filter(ip => 
+                              ip.toLowerCase().includes(timelineRemoteIpSearchTerm.toLowerCase())
+                            );
+                            
+                            if (filteredIps.length === 0) {
+                              return (
+                                <div className="p-3 text-sm text-gray-500">No IP addresses found matching "{timelineRemoteIpSearchTerm}"</div>
+                              );
+                            }
+                            
+                            return (
+                              <>
+                                <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const unselectedFiltered = filteredIps.filter(ip => !timelineRemoteIpFilter.includes(ip));
+                                      if (unselectedFiltered.length > 0) {
+                                        setTimelineRemoteIpFilter(prev => [...prev, ...unselectedFiltered]);
+                                      } else {
+                                        setTimelineRemoteIpFilter(prev => prev.filter(ip => !filteredIps.includes(ip)));
+                                      }
+                                      if (selectedTimestamp) {
+                                        analyzeQueriesAtTimestamp(selectedTimestamp);
+                                      }
+                                    }}
+                                    className="text-xs text-purple-600 hover:text-purple-800 font-medium"
+                                  >
+                                    {filteredIps.some(ip => !timelineRemoteIpFilter.includes(ip)) ? 'Select All Visible' : 'Deselect All Visible'}
+                                  </button>
+                                  <span className="text-xs text-gray-500 ml-2">
+                                    ({filteredIps.length} found)
+                                  </span>
+                                </div>
+                                {filteredIps.map((ip) => (
+                                  <div
+                                    key={ip}
+                                    className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setTimelineRemoteIpFilter(prev => 
+                                        prev.includes(ip) 
+                                          ? prev.filter(i => i !== ip)
+                                          : [...prev, ip]
+                                      );
+                                      if (selectedTimestamp) {
+                                        analyzeQueriesAtTimestamp(selectedTimestamp);
+                                      }
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={timelineRemoteIpFilter.includes(ip)}
+                                      onChange={() => {}} // Handled by parent onClick
+                                      className="w-4 h-4 text-purple-600 bg-white border-gray-200 rounded focus:ring-purple-500 focus:ring-2 mr-3"
+                                    />
+                                    <span className="text-sm text-gray-700 truncate flex-1">{ip}</span>
+                                  </div>
+                                ))}
+                              </>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="text-sm text-gray-600">
+                    Filter by remote IP address (without port)
+                  </div>
                 </div>
               </div>
               
@@ -2560,7 +5530,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.464 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z" />
                 </svg>
                 <p className="font-semibold">No queries were running at the selected timestamp</p>
-              </div>
+            </div>
               <div className="text-yellow-700 text-sm space-y-1">
                 <p>Timestamp: {formatTimestampInTimezone(selectedTimestamp, timezone)}</p>
                 <div className="mt-3 space-y-1">
@@ -2571,117 +5541,30 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                     <li>• Verify your log data contains query timing information</li>
                     <li>• Try a timestamp when you know queries were active</li>
                   </ul>
-                </div>
-              </div>
-            </div>
+        </div>
+      </div>
+                  </div>
           )}
         </div>
       </div>
-
-      {/* Authentication Events Widget */}
-      <div className="bg-white rounded-xl p-6 border border-gray-300">
-        <h3 className="text-xl font-semibold text-purple-600 mb-4">🔐 Authentication Events</h3>
-        <div className="space-y-3 max-h-64 overflow-y-auto">
-          {analytics.authEvents.length > 0 ? (
-            analytics.authEvents.map((auth, index) => (
-              <div key={index} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <p className="text-gray-700 text-sm">{auth._id.type}</p>
-                    {auth._id.user && (
-                      <p className="text-blue-600 text-sm">
-                        User: {typeof auth._id.user === 'object' ? JSON.stringify(auth._id.user) : auth._id.user}
-                      </p>
-                    )}
-                    {auth._id.source && (
-                      <p className="text-gray-600 text-sm font-mono">
-                        From: {typeof auth._id.source === 'object' ? JSON.stringify(auth._id.source) : auth._id.source}
-                      </p>
-                    )}
-                  </div>
-                  <div className="text-right text-sm">
-                    <div className="text-purple-400 font-semibold">{auth.count}x</div>
-                    <div className="text-gray-600">{formatTimestamp(auth.lastSeen)}</div>
-                  </div>
-                </div>
-              </div>
-            ))
-          ) : (
-            <p className="text-gray-600">No authentication events found.</p>
-          )}
-        </div>
-      </div>
-
-      {/* Index Usage Widget */}
-      <div className="bg-white rounded-xl p-6 border border-gray-300">
-        <h3 className="text-xl font-semibold text-cyan-600 mb-4">📈 Index Usage Patterns</h3>
-        <div className="space-y-3 max-h-64 overflow-y-auto">
-          {analytics.indexUsage.length > 0 ? (
-            analytics.indexUsage.map((usage, index) => (
-              <div key={index} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <p className="text-gray-700 text-sm font-mono">{usage._id || 'Unknown Plan'}</p>
-                    <p className="text-gray-600 text-xs">
-                      Collections: {usage.collections && Array.isArray(usage.collections) ? usage.collections.join(', ') : 'N/A'}
-                    </p>
-                  </div>
-                  <div className="text-cyan-400 font-semibold">{usage.count}x</div>
-                </div>
-              </div>
-            ))
-          ) : (
-            <p className="text-gray-600">No index usage patterns detected.</p>
-          )}
-        </div>
-      </div>
-
-      {/* Server Health Widget */}
-      <div className="bg-white rounded-xl p-6 border border-gray-300">
-        <h3 className="text-xl font-semibold text-orange-600 mb-4">🏥 Server Health Events</h3>
-        <div className="space-y-3 max-h-64 overflow-y-auto">
-          {analytics.healthEvents.length > 0 ? (
-            analytics.healthEvents.map((health, index) => (
-              <div key={index} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-2">
-                      <span className={`font-mono text-sm px-2 py-1 rounded ${getSeverityColor(health.severity)}`}>
-                        {health.severity}
-                      </span>
-                      <span className="text-orange-400 text-sm">{health.component}</span>
-                      <span className="text-gray-600 text-sm">{health.context}</span>
-                    </div>
-                    <p className="text-gray-700 text-sm mt-1">{health.message}</p>
-                  </div>
-                  <div className="text-gray-600 text-sm">{formatTimestamp(health.timestamp)}</div>
-                </div>
-              </div>
-            ))
-          ) : (
-            <p className="text-gray-600">No significant server health events.</p>
-          )}
-        </div>
-      </div>
-
 
       {/* Query Details Modal */}
       {showQueryModal && selectedQuery && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl border border-gray-300 max-w-4xl w-full max-h-[90vh] overflow-hidden">
             <div className="p-6 border-b border-gray-300">
               <div className="flex justify-between items-center">
                 <h3 className="text-xl font-semibold text-yellow-600">🔍 Query Details</h3>
                 <div className="flex items-center space-x-4">
                   {AI_FEATURE_ENABLED && (
-                    <button
-                      onClick={handleAskAI}
-                      disabled={isLoadingAi}
-                      className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                    >
-                      <span>🤖</span>
-                      <span>{isLoadingAi ? 'Analyzing...' : 'Ask AI'}</span>
-                    </button>
+                  <button
+                    onClick={handleAskAI}
+                    disabled={isLoadingAi}
+                    className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  >
+                    <span>🤖</span>
+                    <span>{isLoadingAi ? 'Analyzing...' : 'Ask AI'}</span>
+                  </button>
                   )}
                   <button
                     onClick={() => {
@@ -2697,29 +5580,29 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
               
               {/* Tab Navigation - Only show tabs if AI is enabled */}
               {AI_FEATURE_ENABLED && (
-                <div className="flex space-x-4 mt-4">
-                  <button
-                    onClick={() => setActiveTab('query')}
-                    className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                      activeTab === 'query'
-                        ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
-                        : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
-                    }`}
-                  >
-                    Query Details
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('ai')}
-                    className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                      activeTab === 'ai'
-                        ? 'bg-purple-100 text-purple-800 border border-purple-300'
-                        : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
-                    }`}
-                  >
-                    AI Analysis
-                    {aiResponse && <span className="ml-1 w-2 h-2 bg-green-500 rounded-full inline-block"></span>}
-                  </button>
-                </div>
+              <div className="flex space-x-4 mt-4">
+                <button
+                  onClick={() => setActiveTab('query')}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    activeTab === 'query'
+                      ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
+                      : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                  }`}
+                >
+                  Query Details
+                </button>
+                <button
+                  onClick={() => setActiveTab('ai')}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    activeTab === 'ai'
+                      ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                      : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                  }`}
+                >
+                  AI Analysis
+                  {aiResponse && <span className="ml-1 w-2 h-2 bg-green-500 rounded-full inline-block"></span>}
+                </button>
+              </div>
               )}
             </div>
             
@@ -2928,12 +5811,12 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
                       </div>
                       <p className="text-red-700 mt-2">{aiError}</p>
                       {AI_FEATURE_ENABLED && (
-                        <button
-                          onClick={handleAskAI}
-                          className="mt-3 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                        >
-                          Try Again
-                        </button>
+                      <button
+                        onClick={handleAskAI}
+                        className="mt-3 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                      >
+                        Try Again
+                      </button>
                       )}
                     </div>
                   )}

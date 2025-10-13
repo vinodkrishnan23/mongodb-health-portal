@@ -233,12 +233,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
                     }
                   }
                 },
-                dateFilter
+                //dateFilter
               ]
             }
           },
           // Add $sample stage to limit data before grouping (helps prevent huge arrays)
-          { $sample: { size: 10000 } },
+          //{ $sample: { size: 10000 } },
           {
             $group: {
               _id: {
@@ -340,7 +340,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             }
           },
           { $sort: { "duration": -1 } },
-          { $limit: 50 }
+          //{ $limit: 50 }
         ]).toArray();
         console.log(`⏱️  Slow Operations Query: ${Date.now() - queryStart}ms`);
         return result;
@@ -396,7 +396,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             }
           },
           { $sort: { count: -1 } },
-          { $limit: 20 }
+          //{ $limit: 20 }
         ]).toArray();
         console.log(`⏱️  Auth Events Query: ${Date.now() - queryStart}ms`);
         return result;
@@ -422,7 +422,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             }
           },
           // Add sample stage to prevent BSON size issues
-          { $sample: { size: 5000 } },
+          //{ $sample: { size: 5000 } },
           {
             $group: {
               _id: "$attr.planSummary",
@@ -440,7 +440,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             }
           },
           { $sort: { count: -1 } },
-          { $limit: 15 }
+          //{ $limit: 15 }
         ]).toArray();
         console.log(`⏱️  Index Usage Query: ${Date.now() - queryStart}ms`);
         return result;
