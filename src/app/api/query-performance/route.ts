@@ -92,7 +92,7 @@ function createDateFilter(startDate?: Date, endDate?: Date, maxDate?: Date, star
 }
 
 // Helper function to create additional filters for slow queries (applied at MongoDB query level)
-function createSlowQueryFilters(namespaceFilter?: string, excludeSystemNamespaces?: boolean, inMemorySortsFilter?: boolean, fromMultiPlannerFilter?: boolean) {
+function createSlowQueryFilters(namespaceFilter?: string, excludeSystemNamespaces?: boolean, inMemorySortsFilter?: boolean, fromMultiPlannerFilter?: boolean, collectionScansFilter?: boolean) {
   const additionalFilters: any[] = [];
   
   // NOTE: Operation type filter is now applied post-aggregation to match frontend logic
@@ -126,6 +126,13 @@ function createSlowQueryFilters(namespaceFilter?: string, excludeSystemNamespace
   if (fromMultiPlannerFilter) {
     additionalFilters.push({
       "attr.fromMultiPlanner": true
+    });
+  }
+  
+  // Collection scans filter
+  if (collectionScansFilter) {
+    additionalFilters.push({
+      "attr.planSummary": "COLLSCAN"
     });
   }
   
@@ -244,6 +251,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const excludeSystemNamespaces = searchParams.get('excludeSystemNamespaces') === 'true';
     const inMemorySortsFilter = searchParams.get('inMemorySortsFilter') === 'true';
     const fromMultiPlannerFilter = searchParams.get('fromMultiPlannerFilter') === 'true';
+    const collectionScansFilter = searchParams.get('collectionScansFilter') === 'true';
     
     if (!sourceFile) {
       return NextResponse.json({
@@ -349,10 +357,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     
     // Create additional filters for slow queries (operation filter applied post-aggregation)
-    const slowQueryAdditionalFilters = createSlowQueryFilters(namespaceFilter || undefined, excludeSystemNamespaces, inMemorySortsFilter, fromMultiPlannerFilter);
+    const slowQueryAdditionalFilters = createSlowQueryFilters(namespaceFilter || undefined, excludeSystemNamespaces, inMemorySortsFilter, fromMultiPlannerFilter, collectionScansFilter);
     
     console.log(`🚀 Query Performance API - Starting queries for: ${filterDescription}...`);
-    console.log(`🔍 Additional filters: operation=${operationFilter}, namespace=${namespaceFilter}, excludeSystem=${excludeSystemNamespaces}, inMemorySort=${inMemorySortsFilter}, multiPlanner=${fromMultiPlannerFilter}`);
+    console.log(`🔍 Additional filters: operation=${operationFilter}, namespace=${namespaceFilter}, excludeSystem=${excludeSystemNamespaces}, inMemorySort=${inMemorySortsFilter}, multiPlanner=${fromMultiPlannerFilter}, collectionScans=${collectionScansFilter}`);
     console.log(`🔍 Date filter being applied:`, JSON.stringify(dateFilter, null, 2));
     
     // Debug: Check how many total documents match the basic filters before slow query filtering
@@ -516,7 +524,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         }
       },
       { $sort: { "duration": -1 } },
-      { $limit: 5000 }
+      //{ $limit: 5000 }
     ];
     
     console.log('🔍 QUERY PERFORMANCE PIPELINE:');
@@ -585,6 +593,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             excludeSystemNamespaces,
             inMemorySortsFilter,
             fromMultiPlannerFilter,
+            collectionScansFilter,
             timeFilter,
             hasAdditionalFilters: slowQueryAdditionalFilters.length > 0
           }
