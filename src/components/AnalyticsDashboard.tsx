@@ -92,8 +92,15 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
   const [timeFilter, setTimeFilter] = useState<string>('');
   
   // Operation type and namespace filter states
-  const [operationFilter, setOperationFilter] = useState<string>('');
-  const [namespaceFilter, setNamespaceFilter] = useState<string>('');
+  const [operationFilter, setOperationFilter] = useState<string[]>([]);
+  const [namespaceFilter, setNamespaceFilter] = useState<string[]>([]);
+  const [namespaceSearchTerm, setNamespaceSearchTerm] = useState<string>('');
+  const [showNamespaceDropdown, setShowNamespaceDropdown] = useState<boolean>(false);
+  const [remoteIpFilter, setRemoteIpFilter] = useState<string[]>([]);
+  const [remoteIpSearchTerm, setRemoteIpSearchTerm] = useState<string>('');
+  const [showRemoteIpDropdown, setShowRemoteIpDropdown] = useState<boolean>(false);
+  const [operationSearchTerm, setOperationSearchTerm] = useState<string>('');
+  const [showOperationDropdown, setShowOperationDropdown] = useState<boolean>(false);
   const [inMemorySortsFilter, setInMemorySortsFilter] = useState<boolean>(false);
   const [fromMultiPlannerFilter, setFromMultiPlannerFilter] = useState<boolean>(false);
   const [excludeSystemNamespaces, setExcludeSystemNamespaces] = useState<boolean>(false);
@@ -105,6 +112,9 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
   const [showTimelineAnalysis, setShowTimelineAnalysis] = useState(false);
   const [timelineSortMetric, setTimelineSortMetric] = useState<string>('duration');
   const [timelineOperationFilter, setTimelineOperationFilter] = useState<string>('');
+  const [timelineRemoteIpFilter, setTimelineRemoteIpFilter] = useState<string[]>([]);
+  const [timelineRemoteIpSearchTerm, setTimelineRemoteIpSearchTerm] = useState<string>('');
+  const [showTimelineRemoteIpDropdown, setShowTimelineRemoteIpDropdown] = useState<boolean>(false);
   const [timelineInMemorySortsFilter, setTimelineInMemorySortsFilter] = useState<boolean>(false);
   const [timelineFromMultiPlannerFilter, setTimelineFromMultiPlannerFilter] = useState<boolean>(false);
   const [timelineExcludeErroredFilter, setTimelineExcludeErroredFilter] = useState<boolean>(false);
@@ -264,8 +274,9 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     endDate?: string;
     startTime?: string;
     endTime?: string;
-    operationFilter?: string;
-    namespaceFilter?: string;
+    operationFilter?: string[];
+    namespaceFilter?: string[];
+    remoteIpFilter?: string[];
     excludeSystemNamespaces?: boolean;
     inMemorySortsFilter?: boolean;
     fromMultiPlannerFilter?: boolean;
@@ -363,18 +374,28 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
           params.set('endDate', filterParams.endDate);
         }
       }
-      if (filterParams?.operationFilter) {
-        params.set('operationFilter', filterParams.operationFilter);
+      if (filterParams?.operationFilter && filterParams.operationFilter.length > 0) {
+        params.set('operationFilter', filterParams.operationFilter.join(','));
         // console.log('🔍 Sending operationFilter to API:', filterParams.operationFilter);
       }
-      if (filterParams?.namespaceFilter) params.set('namespaceFilter', filterParams.namespaceFilter);
+      if (filterParams?.namespaceFilter && filterParams.namespaceFilter.length > 0) {
+        params.set('namespaceFilter', filterParams.namespaceFilter.join(','));
+      }
+      if (filterParams?.remoteIpFilter && filterParams.remoteIpFilter.length > 0) {
+        params.set('remoteIpFilter', filterParams.remoteIpFilter.join(','));
+      }
       if (filterParams?.excludeSystemNamespaces) params.set('excludeSystemNamespaces', 'true');
       if (filterParams?.inMemorySortsFilter) params.set('inMemorySortsFilter', 'true');
       if (filterParams?.fromMultiPlannerFilter) params.set('fromMultiPlannerFilter', 'true');
       if (filterParams?.collectionScansFilter) params.set('collectionScansFilter', 'true');
       
       // console.log('📡 Final Query Performance API URL:', `/api/query-performance?${params.toString()}`);
-      // console.log('📡 All URL parameters being sent:', Object.fromEntries(params.entries()));
+      console.log('📡 All URL parameters being sent:', Object.fromEntries(params.entries()));
+      console.log('🔍 Filter values:', {
+        namespaceFilter: filterParams?.namespaceFilter,
+        remoteIpFilter: filterParams?.remoteIpFilter,
+        operationFilter: filterParams?.operationFilter
+      });
       
       const response = await fetch(`/api/query-performance?${params.toString()}`, {
         headers: {
@@ -396,7 +417,9 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
           
           // Store original unfiltered queries on first load (no specific filters applied)
           // Note: We ignore date/time filters for dropdown population to show all possible values
-          const hasSpecificFilters = filterParams?.operationFilter || filterParams?.namespaceFilter || 
+          const hasSpecificFilters = (filterParams?.operationFilter && filterParams.operationFilter.length > 0) || 
+                                    (filterParams?.namespaceFilter && filterParams.namespaceFilter.length > 0) || 
+                                    (filterParams?.remoteIpFilter && filterParams.remoteIpFilter.length > 0) || 
                                     filterParams?.inMemorySortsFilter || filterParams?.fromMultiPlannerFilter || 
                                     filterParams?.excludeSystemNamespaces || filterParams?.collectionScansFilter;
           
@@ -562,11 +585,21 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     setSelectedQuickDate('');
     setShowManualDateFilters(true);
     // Reset other filters
-    setOperationFilter('');
-    setNamespaceFilter('');
+    setOperationFilter([]);
+    setNamespaceFilter([]);
+    setNamespaceSearchTerm('');
+    setRemoteIpFilter([]);
+    setRemoteIpSearchTerm('');
+    setOperationSearchTerm('');
+    setShowNamespaceDropdown(false);
+    setShowRemoteIpDropdown(false);
+    setShowOperationDropdown(false);
     setInMemorySortsFilter(false);
     setFromMultiPlannerFilter(false);
     setExcludeSystemNamespaces(false);
+    setCollectionScansFilter(false);
+    
+    console.log('🧹 All filters cleared');
   };
 
   // Trigger query performance refetch when filter values change (with debouncing)
@@ -586,8 +619,9 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
         endDate: endDate && endDate.trim() ? endDate : undefined,
         startTime: startTime && startTime.trim() ? startTime : undefined,
         endTime: endTime && endTime.trim() ? endTime : undefined,
-        operationFilter: operationFilter || undefined,
-        namespaceFilter: namespaceFilter || undefined,
+        operationFilter: operationFilter.length > 0 ? operationFilter : undefined,
+        namespaceFilter: namespaceFilter.length > 0 ? namespaceFilter : undefined,
+        remoteIpFilter: remoteIpFilter.length > 0 ? remoteIpFilter : undefined,
         excludeSystemNamespaces: excludeSystemNamespaces || undefined,
         inMemorySortsFilter: inMemorySortsFilter || undefined,
         fromMultiPlannerFilter: fromMultiPlannerFilter || undefined,
@@ -601,7 +635,212 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     }, 500); // 500ms debounce
     
     return () => clearTimeout(timeoutId);
-  }, [startDate, endDate, startTime, endTime, operationFilter, namespaceFilter, inMemorySortsFilter, fromMultiPlannerFilter, excludeSystemNamespaces, collectionScansFilter]);
+  }, [startDate, endDate, startTime, endTime, operationFilter, namespaceFilter, remoteIpFilter, inMemorySortsFilter, fromMultiPlannerFilter, excludeSystemNamespaces, collectionScansFilter]);
+
+  // Handle click outside to close dropdowns
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Element;
+      
+      // Check if click is inside any dropdown
+      const isInsideNamespaceDropdown = target.closest('[data-dropdown="namespace"]');
+      const isInsideRemoteIpDropdown = target.closest('[data-dropdown="remoteip"]');
+      const isInsideOperationDropdown = target.closest('[data-dropdown="operation"]');
+      const isInsideTimelineRemoteIpDropdown = target.closest('[data-dropdown="timeline-remoteip"]');
+      
+      if (!isInsideNamespaceDropdown && showNamespaceDropdown) {
+        setShowNamespaceDropdown(false);
+      }
+      if (!isInsideRemoteIpDropdown && showRemoteIpDropdown) {
+        setShowRemoteIpDropdown(false);
+      }
+      if (!isInsideOperationDropdown && showOperationDropdown) {
+        setShowOperationDropdown(false);
+      }
+      if (!isInsideTimelineRemoteIpDropdown && showTimelineRemoteIpDropdown) {
+        setShowTimelineRemoteIpDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showNamespaceDropdown, showRemoteIpDropdown, showOperationDropdown, showTimelineRemoteIpDropdown]);
+
+  // Helper function to get filtered data source based on all current filters
+  const getFilteredDataSource = useCallback((excludeFilters: string[] = []) => {
+    const useOriginal = originalSlowQueries.length > 0;
+    let dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
+    
+    if (!dataSource || dataSource.length === 0) {
+      console.log('🔍 getFilteredDataSource: No data source available');
+      return [];
+    }
+
+    console.log(`🔍 getFilteredDataSource: Starting with ${dataSource.length} queries, excluding filters:`, excludeFilters);
+
+    // NOTE: Checkbox filters (excludeSystemNamespaces, inMemorySortsFilter, fromMultiPlannerFilter, collectionScansFilter) 
+    // are already applied at the API level in the MongoDB query, so we don't need to apply them again here.
+    // This function only handles dropdown filters for interconnected filtering.
+
+    // Apply dropdown filters
+    if (!excludeFilters.includes('namespaceFilter') && namespaceFilter.length > 0) {
+      dataSource = dataSource.filter((query: any) => {
+        const namespace = query.namespace || query.attr?.ns;
+        return namespace && namespaceFilter.includes(namespace);
+      });
+    }
+
+    if (!excludeFilters.includes('remoteIpFilter') && remoteIpFilter.length > 0) {
+      dataSource = dataSource.filter((query: any) => {
+        const remoteIP = query.remoteIP || query.attr?.remote;
+        if (!remoteIP) return false;
+        const cleanIP = remoteIP.includes(':') ? remoteIP.split(':')[0] : remoteIP;
+        return remoteIpFilter.includes(cleanIP);
+      });
+    }
+
+    if (!excludeFilters.includes('operationFilter') && operationFilter.length > 0) {
+      dataSource = dataSource.filter((query: any) => {
+        // Use the same operation type derivation logic as in the API
+        const getOperationType = (query: any) => {
+          if (query.command) {
+            return Object.keys(query.command)[0] || 'unknown';
+          }
+          if (query.operation) {
+            return query.operation;
+          }
+          if (query.msg && query.msg.includes('Slow query')) {
+            return 'query';
+          }
+          if (query.errCode) {
+            return 'error';
+          }
+          return 'unknown';
+        };
+        
+        const operationType = getOperationType(query);
+        return operationFilter.includes(operationType);
+      });
+    }
+
+    console.log(`🔍 getFilteredDataSource: Final result ${dataSource.length} queries`);
+    return dataSource;
+  }, [originalSlowQueries, analytics?.slowQueries, namespaceFilter, remoteIpFilter, operationFilter]);
+
+  // Handle interconnected filters - comprehensive system
+  // Clean up incompatible selections when any filter changes (with debounce)
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      const cleanupIncompatibleSelections = () => {
+        console.log('🔄 Running filter cleanup with current state:', {
+          namespaceFilter: namespaceFilter.length,
+          remoteIpFilter: remoteIpFilter.length,
+          operationFilter: operationFilter.length
+        });
+        let hasChanges = false;
+
+      // Clean up remote IP selections based on other filters
+      if (remoteIpFilter.length > 0) {
+        const validDataForIps = getFilteredDataSource(['remoteIpFilter']);
+        console.log('🔍 Valid data for IPs check:', validDataForIps.length, 'queries');
+        const validIps = Array.from(new Set(
+          validDataForIps
+            .map((query: any) => query.remoteIP || query.attr?.remote)
+            .filter((ip): ip is string => Boolean(ip) && typeof ip === 'string')
+            .map((ip: string) => ip.includes(':') ? ip.split(':')[0] : ip)
+            .filter((ip): ip is string => Boolean(ip) && ip !== 'Unknown')
+        ));
+        
+        console.log('🔍 Valid IPs found:', validIps.length, validIps.slice(0, 3));
+        console.log('🔍 Current selected IPs:', remoteIpFilter);
+        
+        const validSelectedIps = remoteIpFilter.filter(ip => validIps.includes(ip));
+        if (validSelectedIps.length !== remoteIpFilter.length) {
+          console.log('🔄 About to clean up IP selections. Valid:', validSelectedIps, 'Invalid:', remoteIpFilter.filter(ip => !validIps.includes(ip)));
+          setRemoteIpFilter(validSelectedIps);
+          hasChanges = true;
+        }
+      }
+
+      // Clean up namespace selections based on other filters
+      if (namespaceFilter.length > 0) {
+        const validDataForNamespaces = getFilteredDataSource(['namespaceFilter']);
+        const validNamespaces = Array.from(new Set(
+          validDataForNamespaces
+            .map((query: any) => query.namespace || query.attr?.ns)
+            .filter(Boolean)
+        ));
+        
+        const validSelectedNamespaces = namespaceFilter.filter(ns => validNamespaces.includes(ns));
+        if (validSelectedNamespaces.length !== namespaceFilter.length) {
+          setNamespaceFilter(validSelectedNamespaces);
+          console.log('🔄 Cleaned up incompatible namespace selections:', namespaceFilter.filter(ns => !validNamespaces.includes(ns)));
+          hasChanges = true;
+        }
+      }
+
+      // Clean up operation selections based on other filters
+      if (operationFilter.length > 0) {
+        const validDataForOperations = getFilteredDataSource(['operationFilter']);
+        const validOperations = Array.from(new Set(
+          validDataForOperations.map((query: any) => {
+            // Use the same operation type derivation logic
+            if (query.command) {
+              return Object.keys(query.command)[0] || 'unknown';
+            }
+            if (query.operation) {
+              return query.operation;
+            }
+            if (query.msg && query.msg.includes('Slow query')) {
+              return 'query';
+            }
+            if (query.errCode) {
+              return 'error';
+            }
+            return 'unknown';
+          }).filter(Boolean)
+        ));
+        
+        const validSelectedOperations = operationFilter.filter(op => validOperations.includes(op));
+        if (validSelectedOperations.length !== operationFilter.length) {
+          setOperationFilter(validSelectedOperations);
+          console.log('🔄 Cleaned up incompatible operation selections:', operationFilter.filter(op => !validOperations.includes(op)));
+          hasChanges = true;
+        }
+      }
+
+      if (hasChanges) {
+        console.log('🔄 Filter cleanup completed');
+      }
+    };
+
+    // Only run cleanup if we have data and at least one dropdown filter is active
+    const hasActiveDropdownFilters = namespaceFilter.length > 0 || remoteIpFilter.length > 0 || operationFilter.length > 0;
+    const hasData = (originalSlowQueries.length > 0) || (analytics?.slowQueries && analytics.slowQueries.length > 0);
+    
+    console.log('🔍 Cleanup conditions:', {
+      hasActiveDropdownFilters,
+      hasData,
+      loading,
+      originalSlowQueriesLength: originalSlowQueries.length,
+      analyticsSlowQueriesLength: analytics?.slowQueries?.length || 0
+    });
+    
+      // TEMPORARILY DISABLED: Cleanup might be causing filter resets
+      // TODO: Implement more targeted cleanup that doesn't interfere with user interactions
+      console.log('🔍 Cleanup temporarily disabled to prevent filter resets');
+      
+      // if (hasActiveDropdownFilters && hasData && !loading) {
+      //   cleanupIncompatibleSelections();
+      // } else {
+      //   console.log('🔍 Skipping cleanup - conditions not met');
+      // }
+    }, 300); // 300ms debounce
+    
+    return () => clearTimeout(timeoutId);
+  }, [namespaceFilter, remoteIpFilter, operationFilter, loading]);
 
   // Handle viewport width changes and scrolling boundaries
   useEffect(() => {
@@ -868,6 +1107,17 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
       });
     }
 
+    // Apply Timeline Remote IP filter if selected
+    if (timelineRemoteIpFilter.length > 0) {
+      filteredQueries = filteredQueries.filter((query: any) => {
+        const remoteIP = query.remoteIP || query.attr?.remote;
+        if (!remoteIP) return false;
+        // Remove port number if present and compare
+        const cleanIP = remoteIP.includes(':') ? remoteIP.split(':')[0] : remoteIP;
+        return timelineRemoteIpFilter.includes(cleanIP);
+      });
+    }
+
     // Apply Timeline InMemorySorts filter if selected
     if (timelineInMemorySortsFilter) {
       filteredQueries = filteredQueries.filter((query: any) => query.hasSortStage === true);
@@ -922,7 +1172,7 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
     
     setTimelineQueries(sortedQueries);
     setShowTimelineAnalysis(true);
-  }, [analytics?.slowQueries, timelineOperationFilter, timelineInMemorySortsFilter, timelineFromMultiPlannerFilter, timelineExcludeErroredFilter, excludeSystemNamespaces, timelineSortMetric]);
+  }, [analytics?.slowQueries, timelineOperationFilter, timelineRemoteIpFilter, timelineInMemorySortsFilter, timelineFromMultiPlannerFilter, timelineExcludeErroredFilter, excludeSystemNamespaces, timelineSortMetric]);
 
   // Process Query Hash Analysis
   const processQueryHashAnalysis = useCallback((queries: any[]): QueryHashAnalysis[] => {
@@ -1330,19 +1580,76 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
   // Update query hash analysis when analytics data changes
   useEffect(() => {
     // Use originalSlowQueries if available (unfiltered data), otherwise fall back to analytics.slowQueries
-    const dataSource = originalSlowQueries.length > 0 ? originalSlowQueries : analytics?.slowQueries;
+    let dataSource = originalSlowQueries.length > 0 ? originalSlowQueries : analytics?.slowQueries;
     
     if (dataSource) {
-      const analysis = processQueryHashAnalysis(dataSource);
+      // Apply filters to the data source for Query Hash Analysis
+      let filteredDataSource = dataSource;
+      
+      // Apply operation type filter
+      if (operationFilter.length > 0) {
+        filteredDataSource = filteredDataSource.filter((query: any) => {
+          const operationType = getOperationType(query);
+          return operationType && operationFilter.includes(operationType);
+        });
+      }
+      
+      // Apply namespace filter
+      if (namespaceFilter.length > 0) {
+        filteredDataSource = filteredDataSource.filter((query: any) => {
+          const namespace = query.namespace || query.attr?.ns;
+          return namespace && namespaceFilter.includes(namespace);
+        });
+      }
+      
+      // Apply remote IP filter
+      if (remoteIpFilter.length > 0) {
+        filteredDataSource = filteredDataSource.filter((query: any) => {
+          const remoteIP = query.remoteIP || query.attr?.remote;
+          if (!remoteIP) return false;
+          // Remove port number if present and compare
+          const cleanIP = remoteIP.includes(':') ? remoteIP.split(':')[0] : remoteIP;
+          return remoteIpFilter.includes(cleanIP);
+        });
+      }
+      
+      // Apply exclude system namespaces filter
+      if (excludeSystemNamespaces) {
+        filteredDataSource = filteredDataSource.filter((query: any) => {
+          const namespace = query.namespace || query.attr?.ns;
+          if (!namespace) return true; // Include if no namespace
+          return !/^(admin|config|local)\./.test(namespace);
+        });
+      }
+      
+      // Apply in-memory sorts filter
+      if (inMemorySortsFilter) {
+        filteredDataSource = filteredDataSource.filter((query: any) => query.hasSortStage === true);
+      }
+      
+      // Apply from multi-planner filter
+      if (fromMultiPlannerFilter) {
+        filteredDataSource = filteredDataSource.filter((query: any) => query.fromMultiPlanner === true);
+      }
+      
+      // Apply collection scans filter
+      if (collectionScansFilter) {
+        filteredDataSource = filteredDataSource.filter((query: any) => {
+          const planSummary = query.planSummary || query.attr?.planSummary;
+          return planSummary === 'COLLSCAN';
+        });
+      }
+      
+      const analysis = processQueryHashAnalysis(filteredDataSource);
       setQueryHashAnalysis(analysis);
       
-      const dataAnalysis = processQueryHashDataAnalysis(dataSource);
+      const dataAnalysis = processQueryHashDataAnalysis(filteredDataSource);
       setQueryHashDataAnalysis(dataAnalysis);
       
-      const yieldsAnalysis = processQueryHashYieldsAnalysis(dataSource);
+      const yieldsAnalysis = processQueryHashYieldsAnalysis(filteredDataSource);
       setQueryHashYieldsAnalysis(yieldsAnalysis);
     }
-  }, [originalSlowQueries, analytics?.slowQueries, processQueryHashAnalysis, processQueryHashDataAnalysis, processQueryHashYieldsAnalysis]);
+  }, [originalSlowQueries, analytics?.slowQueries, operationFilter, namespaceFilter, remoteIpFilter, excludeSystemNamespaces, inMemorySortsFilter, fromMultiPlannerFilter, collectionScansFilter, processQueryHashAnalysis, processQueryHashDataAnalysis, processQueryHashYieldsAnalysis]);
 
   // App Traffic Analysis state
   const [appTrafficData, setAppTrafficData] = useState<{
@@ -2424,86 +2731,462 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
             <div className="flex flex-wrap items-center gap-4">
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                 <label htmlFor="operationFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">Operation Type:</label>
-                <select
-                  id="operationFilter"
-                  value={operationFilter}
-                  onChange={(e) => setOperationFilter(e.target.value)}
-                  className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-auto min-w-0"
-                >
-                  <option value="">All Operations</option>
-                  {(() => {
-                    // Use originalSlowQueries for dropdown population to maintain all options
-                    const useOriginal = originalSlowQueries.length > 0;
-                    const dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
-                    
-                    if (!dataSource || dataSource.length === 0) {
-                      // console.log('🔍 No data available for Operation dropdown');
-                      return null;
-                    }
-                    
-                    // console.log(`🔍 Operation dropdown using ${useOriginal ? 'original unfiltered' : 'current analytics'} data (${dataSource.length} queries)`);
-                    
-                    const operations = Array.from(new Set(
-                      dataSource.map((query: any) => {
-                        const op = getOperationType(query);
-                        // Reduced logging to avoid spam - only log if no operation found
-                        if (!op) {
-                          // console.log('🔍 Query with no operation extracted:', { 
-                          //   hasOperation: !!query.operation,
-                          //   hasCommand: !!query.command,
-                          //   operation: query.operation,
-                          //   command: query.command,
-                          //   extractedOp: op
-                          // });
-                        }
-                        return op;
-                      }).filter((op): op is string => Boolean(op))
-                    )).sort();
-                    
-                    // console.log('🔍 Unique operations found for dropdown:', operations);
-                    
-                    return operations.map((op: string) => (
-                    <option key={op} value={op}>{op}</option>
-                    ));
-                  })()}
-                </select>
+                <div className="relative w-full sm:w-auto min-w-0" data-dropdown="operation">
+                  {/* Display selected values */}
+                  {operationFilter.length > 0 && (
+                    <div className="mb-2 flex flex-wrap gap-1">
+                      {operationFilter.map(op => (
+                        <span key={op} className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs flex items-center gap-1">
+                          {op}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOperationFilter(prev => prev.filter(o => o !== op));
+                            }}
+                            className="hover:bg-green-200 rounded-full w-4 h-4 flex items-center justify-center"
+                            title="Remove filter"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOperationFilter([]);
+                        }}
+                        className="bg-red-100 text-red-800 px-2 py-1 rounded text-xs hover:bg-red-200"
+                        title="Clear all operation filters"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Search input */}
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Search and select operations..."
+                      value={operationSearchTerm}
+                      onChange={(e) => setOperationSearchTerm(e.target.value)}
+                      onFocus={() => setShowOperationDropdown(true)}
+                      onClick={() => setShowOperationDropdown(true)}
+                      className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-green-500 w-full sm:w-64"
+                    />
+                    <button
+                      onClick={() => setShowOperationDropdown(!showOperationDropdown)}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  {/* Dropdown */}
+                  {showOperationDropdown && (
+                    <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-hidden">
+                      <div className="max-h-60 overflow-y-auto">
+                        {(() => {
+                          // Get filtered data source based on other filters (excluding operation filter)
+                          const filteredDataSource = getFilteredDataSource(['operationFilter']);
+                          
+                          if (!filteredDataSource || filteredDataSource.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No data available</div>
+                            );
+                          }
+                          
+                          // Extract unique operations
+                          const operations = Array.from(new Set(
+                            filteredDataSource.map((query: any) => {
+                              const op = getOperationType(query);
+                              return op;
+                            }).filter((op): op is string => Boolean(op))
+                          )).sort();
+                          
+                          // Filter operations based on search term
+                          const filteredOperations = operations.filter(op => 
+                            op.toLowerCase().includes(operationSearchTerm.toLowerCase())
+                          );
+                          
+                          if (filteredOperations.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No operations found matching "{operationSearchTerm}"</div>
+                            );
+                          }
+                          
+                          const otherFiltersCount = (remoteIpFilter.length > 0 ? 1 : 0) + 
+                                                  (operationFilter.length > 0 ? 1 : 0);
+                          
+                          return (
+                            <>
+                              <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const unselectedFiltered = filteredOperations.filter(op => !operationFilter.includes(op));
+                                    if (unselectedFiltered.length > 0) {
+                                      setOperationFilter(prev => [...prev, ...unselectedFiltered]);
+                                    } else {
+                                      setOperationFilter(prev => prev.filter(op => !filteredOperations.includes(op)));
+                                    }
+                                  }}
+                                  className="text-xs text-green-600 hover:text-green-800 font-medium"
+                                >
+                                  {filteredOperations.some(op => !operationFilter.includes(op)) ? 'Select All Visible' : 'Deselect All Visible'}
+                                </button>
+                                <span className="text-xs text-gray-500 ml-2">
+                                  ({filteredOperations.length} found{otherFiltersCount > 0 ? `, filtered by ${otherFiltersCount} other filter${otherFiltersCount > 1 ? 's' : ''}` : ''})
+                                </span>
+                              </div>
+                              {filteredOperations.map((op) => (
+                                <div
+                                  key={op}
+                                  className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOperationFilter(prev => 
+                                      prev.includes(op) 
+                                        ? prev.filter(o => o !== op)
+                                        : [...prev, op]
+                                    );
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={operationFilter.includes(op)}
+                                    onChange={() => {}} // Handled by parent onClick
+                                    className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2 mr-3"
+                                  />
+                                  <span className="text-sm text-gray-700 truncate flex-1">{op}</span>
+                                </div>
+                              ))}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
               
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                 <label htmlFor="namespaceFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">Namespace:</label>
-                <select
-                  id="namespaceFilter"
-                  value={namespaceFilter}
-                  onChange={(e) => setNamespaceFilter(e.target.value)}
-                  className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-auto min-w-0"
-                >
-                  <option value="">All Namespaces</option>
-                  {(() => {
-                    // Use originalSlowQueries for dropdown population to maintain all options
-                    const useOriginal = originalSlowQueries.length > 0;
-                    const dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
-                    
-                    if (!dataSource || dataSource.length === 0) {
-                      // console.log('🔍 No data available for Namespace dropdown');
-                      return null;
-                    }
-                    
-                    // console.log(`🔍 Namespace dropdown using ${useOriginal ? 'original unfiltered' : 'current analytics'} data (${dataSource.length} queries)`);
-                    
-                    const namespaces = Array.from(new Set(
-                      dataSource.map((query: any) => {
-                        // Reduced logging to avoid spam
-                        return query.namespace;
-                      }).filter(Boolean)
-                    )).sort();
-                    
-                    // console.log('🔍 Unique namespaces found for dropdown:', namespaces);
-                    
-                    return namespaces.map((ns) => (
-                    <option key={ns} value={ns}>{ns}</option>
-                    ));
-                  })()}
-                </select>
+                <div className="relative w-full sm:w-auto min-w-0" data-dropdown="namespace">
+                  {/* Display selected values */}
+                  {namespaceFilter.length > 0 && (
+                    <div className="mb-2 flex flex-wrap gap-1">
+                      {namespaceFilter.map(ns => (
+                        <span key={ns} className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs flex items-center gap-1">
+                          {ns}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setNamespaceFilter(prev => prev.filter(n => n !== ns));
+                            }}
+                            className="hover:bg-yellow-200 rounded-full w-4 h-4 flex items-center justify-center"
+                            title="Remove filter"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setNamespaceFilter([]);
+                        }}
+                        className="bg-red-100 text-red-800 px-2 py-1 rounded text-xs hover:bg-red-200"
+                        title="Clear all namespace filters"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Search input */}
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Search and select namespaces..."
+                      value={namespaceSearchTerm}
+                      onChange={(e) => setNamespaceSearchTerm(e.target.value)}
+                      onFocus={() => setShowNamespaceDropdown(true)}
+                      onClick={() => setShowNamespaceDropdown(true)}
+                      className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-64"
+                    />
+                    <button
+                      onClick={() => setShowNamespaceDropdown(!showNamespaceDropdown)}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  {/* Dropdown */}
+                  {showNamespaceDropdown && (
+                    <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-hidden">
+                      <div className="max-h-60 overflow-y-auto">
+                        {(() => {
+                          // Use originalSlowQueries for dropdown population to maintain all options
+                          const useOriginal = originalSlowQueries.length > 0;
+                          const dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
+                          
+                          if (!dataSource || dataSource.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No data available</div>
+                            );
+                          }
+                          
+                          // Get filtered data source based on other filters (excluding namespace filter)
+                          const filteredDataSource = getFilteredDataSource(['namespaceFilter']);
+                          
+                          if (!filteredDataSource || filteredDataSource.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No data available</div>
+                            );
+                          }
+                          
+                          // Extract unique namespaces
+                          const namespaces = Array.from(new Set(
+                            filteredDataSource.map((query: any) => {
+                              return query.namespace || query.attr?.ns;
+                            }).filter(Boolean)
+                          )).sort();
+                          
+                          // Filter namespaces based on search term
+                          const filteredNamespaces = namespaces.filter(ns => 
+                            ns.toLowerCase().includes(namespaceSearchTerm.toLowerCase())
+                          );
+                          
+                          if (filteredNamespaces.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No namespaces found matching "{namespaceSearchTerm}"</div>
+                            );
+                          }
+                          
+                          return (
+                            <>
+                              <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const unselectedFiltered = filteredNamespaces.filter(ns => !namespaceFilter.includes(ns));
+                                    if (unselectedFiltered.length > 0) {
+                                      setNamespaceFilter(prev => [...prev, ...unselectedFiltered]);
+                                    } else {
+                                      setNamespaceFilter(prev => prev.filter(ns => !filteredNamespaces.includes(ns)));
+                                    }
+                                  }}
+                                  className="text-xs text-yellow-600 hover:text-yellow-800 font-medium"
+                                >
+                                  {filteredNamespaces.some(ns => !namespaceFilter.includes(ns)) ? 'Select All Visible' : 'Deselect All Visible'}
+                                </button>
+                                <span className="text-xs text-gray-500 ml-2">
+                                  ({filteredNamespaces.length} found{(() => {
+                                    const otherFiltersCount = (remoteIpFilter.length > 0 ? 1 : 0) + 
+                                                            (operationFilter.length > 0 ? 1 : 0);
+                                    return otherFiltersCount > 0 ? `, filtered by ${otherFiltersCount} other filter${otherFiltersCount > 1 ? 's' : ''}` : '';
+                                  })()})
+                                </span>
+                              </div>
+                              {filteredNamespaces.map((ns) => (
+                                <div
+                                  key={ns}
+                                  className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setNamespaceFilter(prev => 
+                                      prev.includes(ns) 
+                                        ? prev.filter(n => n !== ns)
+                                        : [...prev, ns]
+                                    );
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={namespaceFilter.includes(ns)}
+                                    onChange={() => {}} // Handled by parent onClick
+                                    className="w-4 h-4 text-yellow-600 bg-white border-gray-200 rounded focus:ring-yellow-500 focus:ring-2 mr-3"
+                                  />
+                                  <span className="text-sm text-gray-700 truncate flex-1">{ns}</span>
+                                </div>
+                              ))}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <label htmlFor="remoteIpFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">Remote IP:</label>
+                <div className="relative w-full sm:w-auto min-w-0" data-dropdown="remoteip">
+                  {/* Display selected values */}
+                  {remoteIpFilter.length > 0 && (
+                    <div className="mb-2 flex flex-wrap gap-1">
+                      {remoteIpFilter.map(ip => (
+                        <span key={ip} className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs flex items-center gap-1">
+                          {ip}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRemoteIpFilter(prev => prev.filter(i => i !== ip));
+                            }}
+                            className="hover:bg-blue-200 rounded-full w-4 h-4 flex items-center justify-center"
+                            title="Remove filter"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRemoteIpFilter([]);
+                        }}
+                        className="bg-red-100 text-red-800 px-2 py-1 rounded text-xs hover:bg-red-200"
+                        title="Clear all IP filters"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Search input */}
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Search and select IP addresses..."
+                      value={remoteIpSearchTerm}
+                      onChange={(e) => setRemoteIpSearchTerm(e.target.value)}
+                      onFocus={() => {
+                        console.log('🔍 Remote IP input focused');
+                        setShowRemoteIpDropdown(true);
+                      }}
+                      onClick={() => {
+                        console.log('🔍 Remote IP input clicked');
+                        setShowRemoteIpDropdown(true);
+                      }}
+                      className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full sm:w-64"
+                    />
+                    <button
+                      onClick={() => setShowRemoteIpDropdown(!showRemoteIpDropdown)}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  {/* Dropdown */}
+                  {showRemoteIpDropdown && (
+                    <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-hidden">
+                      <div className="max-h-60 overflow-y-auto">
+                        {(() => {
+                          // Use originalSlowQueries for dropdown population to maintain all options
+                          const useOriginal = originalSlowQueries.length > 0;
+                          const dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
+                          
+                          if (!dataSource || dataSource.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No data available</div>
+                            );
+                          }
+                          
+                          // Get filtered data source based on other filters (excluding remote IP filter)
+                          const filteredDataSource = getFilteredDataSource(['remoteIpFilter']);
+                          
+                          if (!filteredDataSource || filteredDataSource.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No data available</div>
+                            );
+                          }
+                          
+                          // Extract unique remote IPs and remove port numbers
+                          const remoteIps = Array.from(new Set(
+                            filteredDataSource
+                              .map((query: any) => query.remoteIP || query.attr?.remote)
+                              .filter((ip): ip is string => Boolean(ip) && typeof ip === 'string')
+                              .map((ip: string) => {
+                                // Remove port number if present (e.g., "192.168.1.1:27017" -> "192.168.1.1")
+                                return ip.includes(':') ? ip.split(':')[0] : ip;
+                              })
+                              .filter((ip): ip is string => Boolean(ip) && ip !== 'Unknown')
+                          )).sort();
+                          
+                          // Filter IPs based on search term
+                          const filteredIps = remoteIps.filter(ip => 
+                            ip.toLowerCase().includes(remoteIpSearchTerm.toLowerCase())
+                          );
+                          
+                          if (filteredIps.length === 0) {
+                            return (
+                              <div className="p-3 text-sm text-gray-500">No IP addresses found matching "{remoteIpSearchTerm}"</div>
+                            );
+                          }
+                          
+                          return (
+                            <>
+                              <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const unselectedFiltered = filteredIps.filter(ip => !remoteIpFilter.includes(ip));
+                                    if (unselectedFiltered.length > 0) {
+                                      setRemoteIpFilter(prev => [...prev, ...unselectedFiltered]);
+                                    } else {
+                                      setRemoteIpFilter(prev => prev.filter(ip => !filteredIps.includes(ip)));
+                                    }
+                                  }}
+                                  className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                                >
+                                  {filteredIps.some(ip => !remoteIpFilter.includes(ip)) ? 'Select All Visible' : 'Deselect All Visible'}
+                                </button>
+                                <span className="text-xs text-gray-500 ml-2">
+                                  ({filteredIps.length} found{(() => {
+                                    const otherFiltersCount = (namespaceFilter.length > 0 ? 1 : 0) + 
+                                                            (operationFilter.length > 0 ? 1 : 0);
+                                    return otherFiltersCount > 0 ? `, filtered by ${otherFiltersCount} other filter${otherFiltersCount > 1 ? 's' : ''}` : '';
+                                  })()})
+                                </span>
+                              </div>
+                              {filteredIps.map((ip) => (
+                                <div
+                                  key={ip}
+                                  className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setRemoteIpFilter(prev => 
+                                      prev.includes(ip) 
+                                        ? prev.filter(i => i !== ip)
+                                        : [...prev, ip]
+                                    );
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={remoteIpFilter.includes(ip)}
+                                    onChange={() => {}} // Handled by parent onClick
+                                    className="w-4 h-4 text-blue-600 bg-white border-gray-200 rounded focus:ring-blue-500 focus:ring-2 mr-3"
+                                  />
+                                  <span className="text-sm text-gray-700 truncate flex-1">{ip}</span>
+                                </div>
+                              ))}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
               
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
@@ -3132,566 +3815,6 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
               </div>
             )}
           </div>
-        </div>
-      </div>
-
-      {/* Timeline Analysis Widget */}
-      <div className="bg-white rounded-xl p-4 lg:p-6 border border-gray-300">
-        <h3 className="text-lg lg:text-xl font-semibold text-green-600 mb-4">Timeline Analysis</h3>
-        
-        <div className="mb-6 border border-green-300 rounded-lg p-4">
-          <h4 className="text-green-700 font-semibold mb-3">Queries Running at Specific Time</h4>
-          
-          {/* Timestamp Input Section */}
-          <div className="mb-4 bg-gray-50 rounded-lg p-3 border border-gray-200">
-            <div className="flex flex-col gap-4">
-              {/* First row: Timestamp input and analyze button */}
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <label htmlFor="selectedTimestamp" className="text-sm font-medium text-gray-700 whitespace-nowrap">
-                    Select Timestamp:
-                  </label>
-                  <input
-                    id="selectedTimestamp"
-                    type="datetime-local"
-                    value={selectedTimestamp}
-                    onChange={(e) => setSelectedTimestamp(e.target.value)}
-                    className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    step="1"
-                  />
-                </div>
-                <button
-                  onClick={() => {
-                    console.log('🔄 Manual refresh triggered', { 
-                      selectedTimestamp, 
-                      hasAnalytics: !!analytics,
-                      slowQueriesCount: analytics?.slowQueries?.length || 0,
-                      timelineQueriesLength: timelineQueries.length
-                    });
-                    if (!selectedTimestamp) {
-                      console.error('❌ No timestamp selected for analysis');
-                      return;
-                    }
-                    if (!analytics?.slowQueries) {
-                      console.error('❌ No analytics or slow queries data available');
-                      return;
-                    }
-                    analyzeQueriesAtTimestamp(selectedTimestamp);
-                  }}
-                  disabled={!selectedTimestamp}
-                  className="bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-2"
-                  title="Refresh timeline analysis with current filters"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  Refresh Analysis
-                </button>
-                <div className="text-sm text-gray-600 space-y-1">
-                  <div>
-                  Found: {timelineQueries.length} concurrent queries{timelineOperationFilter ? ` (${timelineOperationFilter} operations)` : ''}
-                  </div>
-                  <div className="text-xs text-green-600">
-                    💡 Analysis updates automatically when timestamp changes
-                  </div>
-                </div>
-              </div>
-              
-              {/* Second row: Sort metric dropdown */}
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <label htmlFor="timelineSortMetric" className="text-sm font-medium text-gray-700 whitespace-nowrap">
-                    Sort by:
-                  </label>
-                  <select
-                    id="timelineSortMetric"
-                    value={timelineSortMetric}
-                    onChange={(e) => {
-                      setTimelineSortMetric(e.target.value);
-                      if (selectedTimestamp && timelineQueries.length > 0) {
-                        analyzeQueriesAtTimestamp(selectedTimestamp);
-                      }
-                    }}
-                    className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500 w-full sm:w-auto min-w-0"
-                  >
-                    <option value="duration">Operation Execution Time (ms)</option>
-                    <option value="docsExaminedReturnedRatio">Docs Examined/Returned Ratio</option>
-                    <option value="keysExaminedReturnedRatio">Keys Examined/Returned Ratio</option>
-                    <option value="reslen">Response Length (bytes)</option>
-                    <option value="numYields">Number of Yields</option>
-                    <option value="dataReadMB">Data Read from Disk (MB)</option>
-                    <option value="cpuTimeSeconds">CPU Time (s)</option>
-                  </select>
-                </div>
-                <div className="text-sm text-gray-600">
-                  Queries will be sorted by selected metric (highest first)
-                </div>
-              </div>
-              
-              {/* Third row: Operation type filter dropdown */}
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <label htmlFor="timelineOperationFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">
-                    Operation Type:
-                  </label>
-                  <select
-                    id="timelineOperationFilter"
-                    value={timelineOperationFilter}
-                    onChange={(e) => {
-                      setTimelineOperationFilter(e.target.value);
-                      if (selectedTimestamp && timelineQueries.length > 0) {
-                        analyzeQueriesAtTimestamp(selectedTimestamp);
-                      }
-                    }}
-                    className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500 w-full sm:w-auto min-w-0"
-                  >
-                    <option value="">All Operations</option>
-                    <option value="COLLSCAN">COLLSCAN</option>
-                    <option value="CPU Intensive">CPU Intensive</option>
-                    <option value="Disk Intensive">Disk Intensive</option>
-                    <option value="find">Find</option>
-                    <option value="aggregate">Aggregate</option>
-                    <option value="insert">Insert</option>
-                    <option value="update">Update</option>
-                    <option value="delete">Delete</option>
-                    <option value="getmore">Getmore</option>
-                  </select>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="text-sm text-gray-600">
-                    Filter by operation type or performance characteristics
-                  </div>
-                  {timelineOperationFilter && (
-                    <button
-                      onClick={() => {
-                        setTimelineOperationFilter('');
-                        if (selectedTimestamp) {
-                          analyzeQueriesAtTimestamp(selectedTimestamp);
-                        }
-                      }}
-                      className="bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded text-xs font-medium transition-colors"
-                    >
-                      Clear Filter
-                    </button>
-                  )}
-                </div>
-              </div>
-              
-              {/* Fourth row: InMemorySorts filter checkbox */}
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={timelineInMemorySortsFilter}
-                      onChange={(e) => {
-                        setTimelineInMemorySortsFilter(e.target.checked);
-                        if (selectedTimestamp) {
-                          analyzeQueriesAtTimestamp(selectedTimestamp);
-                        }
-                      }}
-                      className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2"
-                    />
-                    <span>InMemorySorts</span>
-                  </label>
-                </div>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={timelineFromMultiPlannerFilter}
-                      onChange={(e) => {
-                        setTimelineFromMultiPlannerFilter(e.target.checked);
-                        if (selectedTimestamp) {
-                          analyzeQueriesAtTimestamp(selectedTimestamp);
-                        }
-                      }}
-                      className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2"
-                    />
-                    <span>FromMultiPlanner</span>
-                  </label>
-                </div>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={timelineExcludeErroredFilter}
-                      onChange={(e) => {
-                        setTimelineExcludeErroredFilter(e.target.checked);
-                        if (selectedTimestamp) {
-                          analyzeQueriesAtTimestamp(selectedTimestamp);
-                        }
-                      }}
-                      className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2"
-                    />
-                    <span>Exclude Errored Queries</span>
-                  </label>
-                </div>
-                <div className="text-sm text-gray-600">
-                  Filter options for query display
-                </div>
-              </div>
-              
-              {/* Fifth row: Time window scale input */}
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <label htmlFor="timelineWindowSeconds" className="text-sm font-medium text-gray-700 whitespace-nowrap">
-                    Time Window (±seconds):
-                  </label>
-                  <input
-                    id="timelineWindowSeconds"
-                    type="number"
-                    min="10"
-                    max="3600"
-                    step="10"
-                    value={timelineWindowSeconds}
-                    onChange={(e) => {
-                      const value = parseInt(e.target.value) || 120;
-                      setTimelineWindowSeconds(Math.max(10, Math.min(3600, value)));
-                    }}
-                    className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500 w-20"
-                  />
-                  <span className="text-xs text-gray-600">seconds</span>
-                </div>
-                <div className="text-sm text-gray-600">
-                  Graph will show ±{timelineWindowSeconds} seconds around the selected timestamp
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Timeline Visualization */}
-          {showTimelineAnalysis && timelineQueries.length > 0 && (
-            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-              <h5 className="text-green-600 font-semibold mb-3">
-                Queries Running at {selectedTimestamp ? formatTimestampInTimezone(selectedTimestamp, timezone, {
-                  year: 'numeric',
-                  month: '2-digit',
-                  day: '2-digit',
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
-                  hour12: false
-                }) : ''}
-              </h5>
-              
-              {/* Timeline Chart */}
-              <div className="relative w-full h-80 bg-gray-900 rounded border border-gray-300 overflow-hidden mb-4">
-                {/* Click instruction */}
-                <div className="absolute top-2 left-2 z-10 bg-black bg-opacity-70 text-white text-xs px-3 py-1 rounded shadow-sm">
-                  💡 Click anywhere on timeline to analyze queries at that time
-                </div>
-                <svg className="w-full h-full" viewBox="0 0 800 320">
-                  {(() => {
-                    if (timelineQueries.length === 0) return null;
-                    
-                    const targetTime = new Date(selectedTimestamp).getTime();
-                    const margin = 60;
-                    const chartWidth = 800 - (margin * 2);
-                    const chartHeight = 320 - 40;
-                    
-                    // Calculate time range for visualization (dynamic seconds around target)
-                    const timeWindow = timelineWindowSeconds * 1000; // Convert seconds to milliseconds
-                    const startTime = targetTime - timeWindow;
-                    const endTime = targetTime + timeWindow;
-                    const timeRange = endTime - startTime;
-                    
-                    return (
-                      <>
-                        {/* Background */}
-                        <rect x="0" y="0" width="800" height="320" fill="#ffffff" />
-                        
-                        {/* Clickable timeline area */}
-                        <rect 
-                          x={margin} 
-                          y="20" 
-                          width={chartWidth} 
-                          height={chartHeight - 20} 
-                          fill="transparent" 
-                          className="cursor-crosshair hover:fill-blue-50 hover:fill-opacity-20"
-                          onClick={(e) => {
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            const svg = e.currentTarget.ownerSVGElement;
-                            if (!svg) return;
-                            
-                            const svgRect = svg.getBoundingClientRect();
-                            const x = e.clientX - svgRect.left;
-                            
-                            // Convert screen coordinates to SVG coordinates
-                            const svgX = (x / svgRect.width) * 800;
-                            
-                            // Convert SVG X coordinate to time
-                            const relativeX = (svgX - margin) / chartWidth;
-                            const clickedTime = startTime + (relativeX * timeRange);
-                            
-                            // Set the timestamp
-                            const clickedDate = new Date(clickedTime);
-                            const timeString = clickedDate.toISOString().slice(0, 19); // Remove Z and milliseconds
-                            
-                            console.log('🎯 Timeline clicked:', {
-                              svgX,
-                              relativeX, 
-                              clickedTime,
-                              formattedTime: timeString
-                            });
-                            
-                            setSelectedTimestamp(timeString);
-                            // Analysis will be triggered automatically via useEffect
-                          }}
-                        />
-                        
-                        {/* Time axis */}
-                        <line x1={margin} y1={chartHeight} x2={800 - margin} y2={chartHeight} stroke="#6B7280" strokeWidth="2"/>
-                        
-                        {/* Target time line */}
-                        <line 
-                          x1={margin + (chartWidth / 2)} 
-                          y1="20" 
-                          x2={margin + (chartWidth / 2)} 
-                          y2={chartHeight} 
-                          stroke="#A855F7" 
-                          strokeWidth="3" 
-                          strokeDasharray="5,5"
-                        />
-                        <text 
-                          x={margin + (chartWidth / 2)} 
-                          y="15" 
-                          textAnchor="middle" 
-                          fill="#A855F7" 
-                          fontSize="12" 
-                          fontWeight="bold"
-                        >
-                          Target Time
-                        </text>
-                        
-                        {/* Time labels */}
-                        {(() => {
-                          // Calculate appropriate intervals based on time window
-                          const totalWindow = timelineWindowSeconds * 2; // Both sides
-                          let intervals: number[];
-                          
-                          if (totalWindow <= 60) {
-                            // For small windows (≤30s each side), show every 10s
-                            intervals = Array.from({length: Math.floor(totalWindow / 10) + 1}, (_, i) => 
-                              -timelineWindowSeconds + (i * 10)
-                            ).filter(offset => Math.abs(offset) <= timelineWindowSeconds);
-                          } else if (totalWindow <= 240) {
-                            // For medium windows (≤120s each side), show every 20s
-                            intervals = Array.from({length: Math.floor(totalWindow / 20) + 1}, (_, i) => 
-                              -timelineWindowSeconds + (i * 20)
-                            ).filter(offset => Math.abs(offset) <= timelineWindowSeconds);
-                          } else if (totalWindow <= 600) {
-                            // For larger windows (≤300s each side), show every 60s
-                            intervals = Array.from({length: Math.floor(totalWindow / 60) + 1}, (_, i) => 
-                              -timelineWindowSeconds + (i * 60)
-                            ).filter(offset => Math.abs(offset) <= timelineWindowSeconds);
-                          } else {
-                            // For very large windows, show every 120s
-                            intervals = Array.from({length: Math.floor(totalWindow / 120) + 1}, (_, i) => 
-                              -timelineWindowSeconds + (i * 120)
-                            ).filter(offset => Math.abs(offset) <= timelineWindowSeconds);
-                          }
-                          
-                          // Always include 0 if not already present
-                          if (!intervals.includes(0)) {
-                            intervals.push(0);
-                            intervals.sort((a, b) => a - b);
-                          }
-                          
-                          return intervals.map(offset => {
-                            const time = new Date(targetTime + (offset * 1000));
-                            const x = margin + ((offset + timelineWindowSeconds) / (timelineWindowSeconds * 2)) * chartWidth;
-                            return (
-                              <g key={offset}>
-                                <line x1={x} y1={chartHeight - 5} x2={x} y2={chartHeight + 5} stroke="#6B7280" strokeWidth="1"/>
-                                <text x={x} y={chartHeight + 20} textAnchor="middle" fill="#6B7280" fontSize="10">
-                                  {offset === 0 ? '0s' : `${offset > 0 ? '+' : ''}${offset}s`}
-                                </text>
-                              </g>
-                            );
-                          });
-                        })()}
-                        
-                        {/* Query bars */}
-                        {timelineQueries.slice(0, 15).map((query, index) => {
-                          const y = 30 + (index * 18);
-                          const barHeight = 14;
-                          
-                          // Parse query start and end times
-                          let queryStart: number, queryEnd: number;
-                          try {
-                            if (typeof query.queryStartTime === 'number') {
-                              queryStart = query.queryStartTime * 1000;
-                            } else if (query.queryStartTime.$date) {
-                              queryStart = new Date(query.queryStartTime.$date).getTime();
-                            } else {
-                              queryStart = new Date(query.queryStartTime).getTime();
-                            }
-                            
-                            if (typeof query.queryEndTime === 'number') {
-                              queryEnd = query.queryEndTime * 1000;
-                            } else if (query.queryEndTime.$date) {
-                              queryEnd = new Date(query.queryEndTime.$date).getTime();
-                            } else {
-                              queryEnd = new Date(query.queryEndTime).getTime();
-                            }
-                          } catch (e) {
-                            return null;
-                          }
-                          
-                          // Calculate bar position and width
-                          const barStart = Math.max(startTime, queryStart);
-                          const barEnd = Math.min(endTime, queryEnd);
-                          
-                          const x = margin + ((barStart - startTime) / timeRange) * chartWidth;
-                          const width = ((barEnd - barStart) / timeRange) * chartWidth;
-                          
-                          // Color based on operation type
-                          const getQueryColor = (query: any) => {
-                            const operation = query.operation;
-                            let opType = 'unknown';
-                            
-                            if (typeof operation === 'object' && operation !== null) {
-                              opType = Object.keys(operation)[0];
-                            } else if (typeof operation === 'string') {
-                              opType = operation;
-                            } else if (query.command) {
-                              if (query.command.find) opType = 'find';
-                              else if (query.command.aggregate) opType = 'aggregate';
-                              else if (query.command.update) opType = 'update';
-                              else if (query.command.insert) opType = 'insert';
-                              else if (query.command.delete) opType = 'delete';
-                              else opType = Object.keys(query.command)[0] || 'unknown';
-                            }
-                            
-                            switch (opType) {
-                              case 'find': return '#10B981';
-                              case 'aggregate': return '#F59E0B';
-                              case 'update': return '#EF4444';
-                              case 'insert': return '#3B82F6';
-                              case 'delete': return '#DC2626';
-                              case 'count': return '#8B5CF6';
-                              default: return '#6B7280';
-                            }
-                          };
-                          
-                          return (
-                            <g key={index}>
-                              <rect
-                                x={x}
-                                y={y}
-                                width={Math.max(width, 2)}
-                                height={barHeight}
-                                fill={getQueryColor(query)}
-                                stroke="#374151"
-                                strokeWidth="0.5"
-                                opacity="0.8"
-                                className="cursor-pointer hover:opacity-100"
-                                onClick={() => {
-                                  setSelectedQuery(query);
-                                  setShowQueryModal(true);
-                                }}
-                              />
-                              <text
-                                x={x + 5}
-                                y={y + barHeight - 2}
-                                fill="#374151"
-                                fontSize="9"
-                                className="pointer-events-none"
-                              >
-                                {query.namespace || 'unknown'} ({(query.duration || 0)}ms)
-                              </text>
-                            </g>
-                          );
-                        })}
-                        
-                        {/* Y-axis label */}
-                        <text x="10" y="20" fill="#9CA3AF" fontSize="12" fontWeight="bold">
-                          Concurrent Queries
-                        </text>
-                        
-                      </>
-                    );
-                  })()}
-                </svg>
-              </div>
-              
-              {/* Query Details List */}
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                <h6 className="text-gray-700 font-semibold text-sm mb-2">
-                  Query Details (sorted by {getTimelineSortLabel()}):
-                </h6>
-                {timelineQueries.map((query, index) => (
-                  <div 
-                    key={index} 
-                    className="bg-white rounded p-3 border border-gray-200 cursor-pointer hover:bg-gray-200 transition-colors"
-                    onClick={() => {
-                      setSelectedQuery(query);
-                      setShowQueryModal(true);
-                    }}
-                  >
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2 mb-1">
-                          <span className="text-green-600 text-sm font-mono">#{index + 1}</span>
-                          <span className="text-blue-600 text-sm">{query.namespace || 'unknown'}</span>
-                          <span className="text-yellow-400 text-xs px-2 py-1 bg-yellow-900 rounded">
-                            {query.duration || 0}ms
-                          </span>
-                          <span className="text-green-400 text-xs px-2 py-1 bg-green-900 rounded">
-                            {formatTimelineSortValue(query)}
-                          </span>
-                          <span className={`text-xs px-2 py-1 rounded font-medium ${
-                            getTimelineOperationType(query) === 'ErroredOut' ? 'bg-red-900 text-red-400' :
-                            getTimelineOperationType(query) === 'COLLSCAN' ? 'bg-yellow-900 text-yellow-400' :
-                            getTimelineOperationType(query) === 'CPU Intensive' ? 'bg-orange-900 text-orange-400' :
-                            getTimelineOperationType(query) === 'Disk Intensive' ? 'bg-cyan-900 text-cyan-400' :
-                            'bg-gray-900 text-gray-600'
-                          }`}>
-                            {getTimelineOperationType(query)}
-                          </span>
-                        </div>
-                        <div className="text-gray-700 text-xs">
-                          <span className="text-gray-600">Operation:</span> {
-                            typeof query.operation === 'object' && query.operation !== null 
-                              ? Object.keys(query.operation)[0] 
-                              : query.operation || 'unknown'
-                          }
-                        </div>
-                        <div className="text-gray-700 text-xs">
-                          <span className="text-gray-600">Started:</span> {formatTimestampIST(query.queryStartTime)} | 
-                          <span className="text-gray-600"> Ended:</span> {formatTimestampIST(query.queryEndTime)}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          
-          {showTimelineAnalysis && timelineQueries.length === 0 && selectedTimestamp && (
-            <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200 text-center">
-              <div className="text-yellow-800 mb-2">
-                <svg className="w-8 h-8 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.464 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                </svg>
-                <p className="font-semibold">No queries were running at the selected timestamp</p>
-              </div>
-              <div className="text-yellow-700 text-sm space-y-1">
-                <p>Timestamp: {formatTimestampInTimezone(selectedTimestamp, timezone)}</p>
-                <div className="mt-3 space-y-1">
-                  <p><strong>Troubleshooting:</strong></p>
-                  <ul className="text-left inline-block">
-                    <li>• Try clicking on a different time on the timeline chart above</li>
-                    <li>• Check if your filters are too restrictive</li>
-                    <li>• Verify your log data contains query timing information</li>
-                    <li>• Try a timestamp when you know queries were active</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
@@ -4696,6 +4819,734 @@ export default function AnalyticsDashboard({ sourceFile, userEmail }: AnalyticsD
         </div>
       </div>
 
+
+
+      {/* Timeline Analysis Widget */}
+      <div className="bg-white rounded-xl p-4 lg:p-6 border border-gray-300">
+        <h3 className="text-lg lg:text-xl font-semibold text-green-600 mb-4">Timeline Analysis</h3>
+        
+        <div className="mb-6 border border-green-300 rounded-lg p-4">
+          <h4 className="text-green-700 font-semibold mb-3">Queries Running at Specific Time</h4>
+          
+          {/* Timestamp Input Section */}
+          <div className="mb-4 bg-gray-50 rounded-lg p-3 border border-gray-200">
+            <div className="flex flex-col gap-4">
+              {/* First row: Timestamp input and analyze button */}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <label htmlFor="selectedTimestamp" className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                    Select Timestamp:
+                  </label>
+                  <input
+                    id="selectedTimestamp"
+                    type="datetime-local"
+                    value={selectedTimestamp}
+                    onChange={(e) => setSelectedTimestamp(e.target.value)}
+                    className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    step="1"
+                  />
+                </div>
+                <button
+                  onClick={() => {
+                    console.log('🔄 Manual refresh triggered', { 
+                      selectedTimestamp, 
+                      hasAnalytics: !!analytics,
+                      slowQueriesCount: analytics?.slowQueries?.length || 0,
+                      timelineQueriesLength: timelineQueries.length
+                    });
+                    if (!selectedTimestamp) {
+                      console.error('❌ No timestamp selected for analysis');
+                      return;
+                    }
+                    if (!analytics?.slowQueries) {
+                      console.error('❌ No analytics or slow queries data available');
+                      return;
+                    }
+                    analyzeQueriesAtTimestamp(selectedTimestamp);
+                  }}
+                  disabled={!selectedTimestamp}
+                  className="bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-2"
+                  title="Refresh timeline analysis with current filters"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Refresh Analysis
+                </button>
+                <div className="text-sm text-gray-600 space-y-1">
+                  <div>
+                  Found: {timelineQueries.length} concurrent queries{timelineOperationFilter ? ` (${timelineOperationFilter} operations)` : ''}
+                  </div>
+                  <div className="text-xs text-green-600">
+                    💡 Analysis updates automatically when timestamp changes
+                  </div>
+                </div>
+              </div>
+              
+              {/* Second row: Sort metric dropdown */}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <label htmlFor="timelineSortMetric" className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                    Sort by:
+                  </label>
+                  <select
+                    id="timelineSortMetric"
+                    value={timelineSortMetric}
+                    onChange={(e) => {
+                      setTimelineSortMetric(e.target.value);
+                      if (selectedTimestamp && timelineQueries.length > 0) {
+                        analyzeQueriesAtTimestamp(selectedTimestamp);
+                      }
+                    }}
+                    className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500 w-full sm:w-auto min-w-0"
+                  >
+                    <option value="duration">Operation Execution Time (ms)</option>
+                    <option value="docsExaminedReturnedRatio">Docs Examined/Returned Ratio</option>
+                    <option value="keysExaminedReturnedRatio">Keys Examined/Returned Ratio</option>
+                    <option value="reslen">Response Length (bytes)</option>
+                    <option value="numYields">Number of Yields</option>
+                    <option value="dataReadMB">Data Read from Disk (MB)</option>
+                    <option value="cpuTimeSeconds">CPU Time (s)</option>
+                  </select>
+                </div>
+                <div className="text-sm text-gray-600">
+                  Queries will be sorted by selected metric (highest first)
+                </div>
+              </div>
+              
+              {/* Third row: Operation type filter dropdown */}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <label htmlFor="timelineOperationFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                    Operation Type:
+                  </label>
+                  <select
+                    id="timelineOperationFilter"
+                    value={timelineOperationFilter}
+                    onChange={(e) => {
+                      setTimelineOperationFilter(e.target.value);
+                      if (selectedTimestamp && timelineQueries.length > 0) {
+                        analyzeQueriesAtTimestamp(selectedTimestamp);
+                      }
+                    }}
+                    className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500 w-full sm:w-auto min-w-0"
+                  >
+                    <option value="">All Operations</option>
+                    <option value="COLLSCAN">COLLSCAN</option>
+                    <option value="CPU Intensive">CPU Intensive</option>
+                    <option value="Disk Intensive">Disk Intensive</option>
+                    <option value="find">Find</option>
+                    <option value="aggregate">Aggregate</option>
+                    <option value="insert">Insert</option>
+                    <option value="update">Update</option>
+                    <option value="delete">Delete</option>
+                    <option value="getmore">Getmore</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="text-sm text-gray-600">
+                    Filter by operation type or performance characteristics
+                  </div>
+                  {timelineOperationFilter && (
+                    <button
+                      onClick={() => {
+                        setTimelineOperationFilter('');
+                        if (selectedTimestamp) {
+                          analyzeQueriesAtTimestamp(selectedTimestamp);
+                        }
+                      }}
+                      className="bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded text-xs font-medium transition-colors"
+                    >
+                      Clear Filter
+                    </button>
+                  )}
+                </div>
+              </div>
+              
+              {/* Remote IP Filter for Timeline */}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <label htmlFor="timelineRemoteIpFilter" className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                    Remote IP:
+                  </label>
+                  <div className="relative w-full sm:w-auto min-w-0" data-dropdown="timeline-remoteip">
+                    {/* Display selected values */}
+                    {timelineRemoteIpFilter.length > 0 && (
+                      <div className="mb-2 flex flex-wrap gap-1">
+                        {timelineRemoteIpFilter.map(ip => (
+                          <span key={ip} className="bg-purple-100 text-purple-800 px-2 py-1 rounded text-xs flex items-center gap-1">
+                            {ip}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTimelineRemoteIpFilter(prev => prev.filter(i => i !== ip));
+                                if (selectedTimestamp) {
+                                  analyzeQueriesAtTimestamp(selectedTimestamp);
+                                }
+                              }}
+                              className="hover:bg-purple-200 rounded-full w-4 h-4 flex items-center justify-center"
+                              title="Remove filter"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setTimelineRemoteIpFilter([]);
+                            if (selectedTimestamp) {
+                              analyzeQueriesAtTimestamp(selectedTimestamp);
+                            }
+                          }}
+                          className="bg-red-100 text-red-800 px-2 py-1 rounded text-xs hover:bg-red-200"
+                          title="Clear all IP filters"
+                        >
+                          Clear All
+                        </button>
+                      </div>
+                    )}
+                    
+                    {/* Search input */}
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Search and select IP addresses..."
+                        value={timelineRemoteIpSearchTerm}
+                        onChange={(e) => setTimelineRemoteIpSearchTerm(e.target.value)}
+                        onFocus={() => setShowTimelineRemoteIpDropdown(true)}
+                        onClick={() => setShowTimelineRemoteIpDropdown(true)}
+                        className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500 w-full sm:w-64"
+                      />
+                      <button
+                        onClick={() => setShowTimelineRemoteIpDropdown(!showTimelineRemoteIpDropdown)}
+                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                    </div>
+                    
+                    {/* Dropdown */}
+                    {showTimelineRemoteIpDropdown && (
+                      <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-hidden">
+                        <div className="max-h-60 overflow-y-auto">
+                          {(() => {
+                            // Use originalSlowQueries for dropdown population to maintain all options
+                            const useOriginal = originalSlowQueries.length > 0;
+                            const dataSource = useOriginal ? originalSlowQueries : analytics?.slowQueries;
+                            
+                            if (!dataSource || dataSource.length === 0) {
+                              return (
+                                <div className="p-3 text-sm text-gray-500">No data available</div>
+                              );
+                            }
+                            
+                            // Extract unique remote IPs and remove port numbers
+                            const remoteIps = Array.from(new Set(
+                              dataSource
+                                .map((query: any) => query.remoteIP || query.attr?.remote)
+                                .filter((ip): ip is string => Boolean(ip) && typeof ip === 'string')
+                                .map((ip: string) => {
+                                  // Remove port number if present (e.g., "192.168.1.1:27017" -> "192.168.1.1")
+                                  return ip.includes(':') ? ip.split(':')[0] : ip;
+                                })
+                                .filter((ip): ip is string => Boolean(ip) && ip !== 'Unknown')
+                            )).sort();
+                            
+                            // Filter IPs based on search term
+                            const filteredIps = remoteIps.filter(ip => 
+                              ip.toLowerCase().includes(timelineRemoteIpSearchTerm.toLowerCase())
+                            );
+                            
+                            if (filteredIps.length === 0) {
+                              return (
+                                <div className="p-3 text-sm text-gray-500">No IP addresses found matching "{timelineRemoteIpSearchTerm}"</div>
+                              );
+                            }
+                            
+                            return (
+                              <>
+                                <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const unselectedFiltered = filteredIps.filter(ip => !timelineRemoteIpFilter.includes(ip));
+                                      if (unselectedFiltered.length > 0) {
+                                        setTimelineRemoteIpFilter(prev => [...prev, ...unselectedFiltered]);
+                                      } else {
+                                        setTimelineRemoteIpFilter(prev => prev.filter(ip => !filteredIps.includes(ip)));
+                                      }
+                                      if (selectedTimestamp) {
+                                        analyzeQueriesAtTimestamp(selectedTimestamp);
+                                      }
+                                    }}
+                                    className="text-xs text-purple-600 hover:text-purple-800 font-medium"
+                                  >
+                                    {filteredIps.some(ip => !timelineRemoteIpFilter.includes(ip)) ? 'Select All Visible' : 'Deselect All Visible'}
+                                  </button>
+                                  <span className="text-xs text-gray-500 ml-2">
+                                    ({filteredIps.length} found)
+                                  </span>
+                                </div>
+                                {filteredIps.map((ip) => (
+                                  <div
+                                    key={ip}
+                                    className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setTimelineRemoteIpFilter(prev => 
+                                        prev.includes(ip) 
+                                          ? prev.filter(i => i !== ip)
+                                          : [...prev, ip]
+                                      );
+                                      if (selectedTimestamp) {
+                                        analyzeQueriesAtTimestamp(selectedTimestamp);
+                                      }
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={timelineRemoteIpFilter.includes(ip)}
+                                      onChange={() => {}} // Handled by parent onClick
+                                      className="w-4 h-4 text-purple-600 bg-white border-gray-200 rounded focus:ring-purple-500 focus:ring-2 mr-3"
+                                    />
+                                    <span className="text-sm text-gray-700 truncate flex-1">{ip}</span>
+                                  </div>
+                                ))}
+                              </>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="text-sm text-gray-600">
+                    Filter by remote IP address (without port)
+                  </div>
+                </div>
+              </div>
+              
+              {/* Fourth row: InMemorySorts filter checkbox */}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={timelineInMemorySortsFilter}
+                      onChange={(e) => {
+                        setTimelineInMemorySortsFilter(e.target.checked);
+                        if (selectedTimestamp) {
+                          analyzeQueriesAtTimestamp(selectedTimestamp);
+                        }
+                      }}
+                      className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2"
+                    />
+                    <span>InMemorySorts</span>
+                  </label>
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={timelineFromMultiPlannerFilter}
+                      onChange={(e) => {
+                        setTimelineFromMultiPlannerFilter(e.target.checked);
+                        if (selectedTimestamp) {
+                          analyzeQueriesAtTimestamp(selectedTimestamp);
+                        }
+                      }}
+                      className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2"
+                    />
+                    <span>FromMultiPlanner</span>
+                  </label>
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={timelineExcludeErroredFilter}
+                      onChange={(e) => {
+                        setTimelineExcludeErroredFilter(e.target.checked);
+                        if (selectedTimestamp) {
+                          analyzeQueriesAtTimestamp(selectedTimestamp);
+                        }
+                      }}
+                      className="w-4 h-4 text-green-600 bg-white border-gray-200 rounded focus:ring-green-500 focus:ring-2"
+                    />
+                    <span>Exclude Errored Queries</span>
+                  </label>
+                </div>
+                <div className="text-sm text-gray-600">
+                  Filter options for query display
+                </div>
+              </div>
+              
+              {/* Fifth row: Time window scale input */}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <label htmlFor="timelineWindowSeconds" className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                    Time Window (±seconds):
+                  </label>
+                  <input
+                    id="timelineWindowSeconds"
+                    type="number"
+                    min="10"
+                    max="3600"
+                    step="10"
+                    value={timelineWindowSeconds}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value) || 120;
+                      setTimelineWindowSeconds(Math.max(10, Math.min(3600, value)));
+                    }}
+                    className="bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500 w-20"
+                  />
+                  <span className="text-xs text-gray-600">seconds</span>
+                </div>
+                <div className="text-sm text-gray-600">
+                  Graph will show ±{timelineWindowSeconds} seconds around the selected timestamp
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Timeline Visualization */}
+          {showTimelineAnalysis && timelineQueries.length > 0 && (
+            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+              <h5 className="text-green-600 font-semibold mb-3">
+                Queries Running at {selectedTimestamp ? formatTimestampInTimezone(selectedTimestamp, timezone, {
+                  year: 'numeric',
+                  month: '2-digit',
+                  day: '2-digit',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                  hour12: false
+                }) : ''}
+              </h5>
+              
+              {/* Timeline Chart */}
+              <div className="relative w-full h-80 bg-gray-900 rounded border border-gray-300 overflow-hidden mb-4">
+                {/* Click instruction */}
+                <div className="absolute top-2 left-2 z-10 bg-black bg-opacity-70 text-white text-xs px-3 py-1 rounded shadow-sm">
+                  💡 Click anywhere on timeline to analyze queries at that time
+                </div>
+                <svg className="w-full h-full" viewBox="0 0 800 320">
+                  {(() => {
+                    if (timelineQueries.length === 0) return null;
+                    
+                    const targetTime = new Date(selectedTimestamp).getTime();
+                    const margin = 60;
+                    const chartWidth = 800 - (margin * 2);
+                    const chartHeight = 320 - 40;
+                    
+                    // Calculate time range for visualization (dynamic seconds around target)
+                    const timeWindow = timelineWindowSeconds * 1000; // Convert seconds to milliseconds
+                    const startTime = targetTime - timeWindow;
+                    const endTime = targetTime + timeWindow;
+                    const timeRange = endTime - startTime;
+                    
+                    return (
+                      <>
+                        {/* Background */}
+                        <rect x="0" y="0" width="800" height="320" fill="#ffffff" />
+                        
+                        {/* Clickable timeline area */}
+                        <rect 
+                          x={margin} 
+                          y="20" 
+                          width={chartWidth} 
+                          height={chartHeight - 20} 
+                          fill="transparent" 
+                          className="cursor-crosshair hover:fill-blue-50 hover:fill-opacity-20"
+                          onClick={(e) => {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const svg = e.currentTarget.ownerSVGElement;
+                            if (!svg) return;
+                            
+                            const svgRect = svg.getBoundingClientRect();
+                            const x = e.clientX - svgRect.left;
+                            
+                            // Convert screen coordinates to SVG coordinates
+                            const svgX = (x / svgRect.width) * 800;
+                            
+                            // Convert SVG X coordinate to time
+                            const relativeX = (svgX - margin) / chartWidth;
+                            const clickedTime = startTime + (relativeX * timeRange);
+                            
+                            // Set the timestamp
+                            const clickedDate = new Date(clickedTime);
+                            const timeString = clickedDate.toISOString().slice(0, 19); // Remove Z and milliseconds
+                            
+                            console.log('🎯 Timeline clicked:', {
+                              svgX,
+                              relativeX, 
+                              clickedTime,
+                              formattedTime: timeString
+                            });
+                            
+                            setSelectedTimestamp(timeString);
+                            // Analysis will be triggered automatically via useEffect
+                          }}
+                        />
+                        
+                        {/* Time axis */}
+                        <line x1={margin} y1={chartHeight} x2={800 - margin} y2={chartHeight} stroke="#6B7280" strokeWidth="2"/>
+                        
+                        {/* Target time line */}
+                        <line 
+                          x1={margin + (chartWidth / 2)} 
+                          y1="20" 
+                          x2={margin + (chartWidth / 2)} 
+                          y2={chartHeight} 
+                          stroke="#A855F7" 
+                          strokeWidth="3" 
+                          strokeDasharray="5,5"
+                        />
+                        <text 
+                          x={margin + (chartWidth / 2)} 
+                          y="15" 
+                          textAnchor="middle" 
+                          fill="#A855F7" 
+                          fontSize="12" 
+                          fontWeight="bold"
+                        >
+                          Target Time
+                        </text>
+                        
+                        {/* Time labels */}
+                        {(() => {
+                          // Calculate appropriate intervals based on time window
+                          const totalWindow = timelineWindowSeconds * 2; // Both sides
+                          let intervals: number[];
+                          
+                          if (totalWindow <= 60) {
+                            // For small windows (≤30s each side), show every 10s
+                            intervals = Array.from({length: Math.floor(totalWindow / 10) + 1}, (_, i) => 
+                              -timelineWindowSeconds + (i * 10)
+                            ).filter(offset => Math.abs(offset) <= timelineWindowSeconds);
+                          } else if (totalWindow <= 240) {
+                            // For medium windows (≤120s each side), show every 20s
+                            intervals = Array.from({length: Math.floor(totalWindow / 20) + 1}, (_, i) => 
+                              -timelineWindowSeconds + (i * 20)
+                            ).filter(offset => Math.abs(offset) <= timelineWindowSeconds);
+                          } else if (totalWindow <= 600) {
+                            // For larger windows (≤300s each side), show every 60s
+                            intervals = Array.from({length: Math.floor(totalWindow / 60) + 1}, (_, i) => 
+                              -timelineWindowSeconds + (i * 60)
+                            ).filter(offset => Math.abs(offset) <= timelineWindowSeconds);
+                          } else {
+                            // For very large windows, show every 120s
+                            intervals = Array.from({length: Math.floor(totalWindow / 120) + 1}, (_, i) => 
+                              -timelineWindowSeconds + (i * 120)
+                            ).filter(offset => Math.abs(offset) <= timelineWindowSeconds);
+                          }
+                          
+                          // Always include 0 if not already present
+                          if (!intervals.includes(0)) {
+                            intervals.push(0);
+                            intervals.sort((a, b) => a - b);
+                          }
+                          
+                          return intervals.map(offset => {
+                            const time = new Date(targetTime + (offset * 1000));
+                            const x = margin + ((offset + timelineWindowSeconds) / (timelineWindowSeconds * 2)) * chartWidth;
+                            return (
+                              <g key={offset}>
+                                <line x1={x} y1={chartHeight - 5} x2={x} y2={chartHeight + 5} stroke="#6B7280" strokeWidth="1"/>
+                                <text x={x} y={chartHeight + 20} textAnchor="middle" fill="#6B7280" fontSize="10">
+                                  {offset === 0 ? '0s' : `${offset > 0 ? '+' : ''}${offset}s`}
+                                </text>
+                              </g>
+                            );
+                          });
+                        })()}
+                        
+                        {/* Query bars */}
+                        {timelineQueries.slice(0, 15).map((query, index) => {
+                          const y = 30 + (index * 18);
+                          const barHeight = 14;
+                          
+                          // Parse query start and end times
+                          let queryStart: number, queryEnd: number;
+                          try {
+                            if (typeof query.queryStartTime === 'number') {
+                              queryStart = query.queryStartTime * 1000;
+                            } else if (query.queryStartTime.$date) {
+                              queryStart = new Date(query.queryStartTime.$date).getTime();
+                            } else {
+                              queryStart = new Date(query.queryStartTime).getTime();
+                            }
+                            
+                            if (typeof query.queryEndTime === 'number') {
+                              queryEnd = query.queryEndTime * 1000;
+                            } else if (query.queryEndTime.$date) {
+                              queryEnd = new Date(query.queryEndTime.$date).getTime();
+                            } else {
+                              queryEnd = new Date(query.queryEndTime).getTime();
+                            }
+                          } catch (e) {
+                            return null;
+                          }
+                          
+                          // Calculate bar position and width
+                          const barStart = Math.max(startTime, queryStart);
+                          const barEnd = Math.min(endTime, queryEnd);
+                          
+                          const x = margin + ((barStart - startTime) / timeRange) * chartWidth;
+                          const width = ((barEnd - barStart) / timeRange) * chartWidth;
+                          
+                          // Color based on operation type
+                          const getQueryColor = (query: any) => {
+                            const operation = query.operation;
+                            let opType = 'unknown';
+                            
+                            if (typeof operation === 'object' && operation !== null) {
+                              opType = Object.keys(operation)[0];
+                            } else if (typeof operation === 'string') {
+                              opType = operation;
+                            } else if (query.command) {
+                              if (query.command.find) opType = 'find';
+                              else if (query.command.aggregate) opType = 'aggregate';
+                              else if (query.command.update) opType = 'update';
+                              else if (query.command.insert) opType = 'insert';
+                              else if (query.command.delete) opType = 'delete';
+                              else opType = Object.keys(query.command)[0] || 'unknown';
+                            }
+                            
+                            switch (opType) {
+                              case 'find': return '#10B981';
+                              case 'aggregate': return '#F59E0B';
+                              case 'update': return '#EF4444';
+                              case 'insert': return '#3B82F6';
+                              case 'delete': return '#DC2626';
+                              case 'count': return '#8B5CF6';
+                              default: return '#6B7280';
+                            }
+                          };
+                          
+                          return (
+                            <g key={index}>
+                              <rect
+                                x={x}
+                                y={y}
+                                width={Math.max(width, 2)}
+                                height={barHeight}
+                                fill={getQueryColor(query)}
+                                stroke="#374151"
+                                strokeWidth="0.5"
+                                opacity="0.8"
+                                className="cursor-pointer hover:opacity-100"
+                                onClick={() => {
+                                  setSelectedQuery(query);
+                                  setShowQueryModal(true);
+                                }}
+                              />
+                              <text
+                                x={x + 5}
+                                y={y + barHeight - 2}
+                                fill="#374151"
+                                fontSize="9"
+                                className="pointer-events-none"
+                              >
+                                {query.namespace || 'unknown'} ({(query.duration || 0)}ms)
+                              </text>
+                            </g>
+                          );
+                        })}
+                        
+                        {/* Y-axis label */}
+                        <text x="10" y="20" fill="#9CA3AF" fontSize="12" fontWeight="bold">
+                          Concurrent Queries
+                        </text>
+                        
+                      </>
+                    );
+                  })()}
+                </svg>
+              </div>
+              
+              {/* Query Details List */}
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                <h6 className="text-gray-700 font-semibold text-sm mb-2">
+                  Query Details (sorted by {getTimelineSortLabel()}):
+                </h6>
+                {timelineQueries.map((query, index) => (
+                  <div 
+                    key={index} 
+                    className="bg-white rounded p-3 border border-gray-200 cursor-pointer hover:bg-gray-200 transition-colors"
+                    onClick={() => {
+                      setSelectedQuery(query);
+                      setShowQueryModal(true);
+                    }}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2 mb-1">
+                          <span className="text-green-600 text-sm font-mono">#{index + 1}</span>
+                          <span className="text-blue-600 text-sm">{query.namespace || 'unknown'}</span>
+                          <span className="text-yellow-400 text-xs px-2 py-1 bg-yellow-900 rounded">
+                            {query.duration || 0}ms
+                          </span>
+                          <span className="text-green-400 text-xs px-2 py-1 bg-green-900 rounded">
+                            {formatTimelineSortValue(query)}
+                          </span>
+                          <span className={`text-xs px-2 py-1 rounded font-medium ${
+                            getTimelineOperationType(query) === 'ErroredOut' ? 'bg-red-900 text-red-400' :
+                            getTimelineOperationType(query) === 'COLLSCAN' ? 'bg-yellow-900 text-yellow-400' :
+                            getTimelineOperationType(query) === 'CPU Intensive' ? 'bg-orange-900 text-orange-400' :
+                            getTimelineOperationType(query) === 'Disk Intensive' ? 'bg-cyan-900 text-cyan-400' :
+                            'bg-gray-900 text-gray-600'
+                          }`}>
+                            {getTimelineOperationType(query)}
+                          </span>
+                        </div>
+                        <div className="text-gray-700 text-xs">
+                          <span className="text-gray-600">Operation:</span> {
+                            typeof query.operation === 'object' && query.operation !== null 
+                              ? Object.keys(query.operation)[0] 
+                              : query.operation || 'unknown'
+                          }
+                        </div>
+                        <div className="text-gray-700 text-xs">
+                          <span className="text-gray-600">Started:</span> {formatTimestampIST(query.queryStartTime)} | 
+                          <span className="text-gray-600"> Ended:</span> {formatTimestampIST(query.queryEndTime)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {showTimelineAnalysis && timelineQueries.length === 0 && selectedTimestamp && (
+            <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200 text-center">
+              <div className="text-yellow-800 mb-2">
+                <svg className="w-8 h-8 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.464 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+                <p className="font-semibold">No queries were running at the selected timestamp</p>
+            </div>
+              <div className="text-yellow-700 text-sm space-y-1">
+                <p>Timestamp: {formatTimestampInTimezone(selectedTimestamp, timezone)}</p>
+                <div className="mt-3 space-y-1">
+                  <p><strong>Troubleshooting:</strong></p>
+                  <ul className="text-left inline-block">
+                    <li>• Try clicking on a different time on the timeline chart above</li>
+                    <li>• Check if your filters are too restrictive</li>
+                    <li>• Verify your log data contains query timing information</li>
+                    <li>• Try a timestamp when you know queries were active</li>
+                  </ul>
+        </div>
+      </div>
+                  </div>
+          )}
+        </div>
+      </div>
 
       {/* Query Details Modal */}
       {showQueryModal && selectedQuery && (

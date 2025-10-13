@@ -92,16 +92,45 @@ function createDateFilter(startDate?: Date, endDate?: Date, maxDate?: Date, star
 }
 
 // Helper function to create additional filters for slow queries (applied at MongoDB query level)
-function createSlowQueryFilters(namespaceFilter?: string, excludeSystemNamespaces?: boolean, inMemorySortsFilter?: boolean, fromMultiPlannerFilter?: boolean, collectionScansFilter?: boolean) {
+function createSlowQueryFilters(namespaceFilter?: string, remoteIpFilter?: string, excludeSystemNamespaces?: boolean, inMemorySortsFilter?: boolean, fromMultiPlannerFilter?: boolean, collectionScansFilter?: boolean) {
   const additionalFilters: any[] = [];
   
   // NOTE: Operation type filter is now applied post-aggregation to match frontend logic
   
-  // Namespace filter
+  // Namespace filter (can be comma-separated for multiple values)
   if (namespaceFilter) {
-    additionalFilters.push({
-      "attr.ns": namespaceFilter
-    });
+    const namespaces = namespaceFilter.split(',').map(ns => ns.trim()).filter(Boolean);
+    if (namespaces.length === 1) {
+      additionalFilters.push({
+        "attr.ns": namespaces[0]
+      });
+    } else if (namespaces.length > 1) {
+      additionalFilters.push({
+        "attr.ns": { $in: namespaces }
+      });
+    }
+  }
+  
+  // Remote IP filter (can be comma-separated for multiple values, without port number)
+  if (remoteIpFilter) {
+    const remoteIps = remoteIpFilter.split(',').map(ip => ip.trim()).filter(Boolean);
+    if (remoteIps.length === 1) {
+      const ip = remoteIps[0];
+      additionalFilters.push({
+        $or: [
+          { "attr.remote": ip }, // Exact match for IP without port
+          { "attr.remote": { $regex: `^${ip.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:` } } // IP with port
+        ]
+      });
+    } else if (remoteIps.length > 1) {
+      const orConditions = remoteIps.flatMap(ip => [
+        { "attr.remote": ip }, // Exact match for IP without port
+        { "attr.remote": { $regex: `^${ip.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:` } } // IP with port
+      ]);
+      additionalFilters.push({
+        $or: orConditions
+      });
+    }
   }
   
   // Exclude system namespaces
@@ -197,7 +226,9 @@ function applyPostAggregationFilters(queries: any[], operationFilter?: string): 
     return queries;
   }
   
-  console.log(`🔍 Applying operation filter: ${operationFilter} to ${queries.length} queries`);
+  // Handle comma-separated operation filters (for multiple selections)
+  const operationFilters = operationFilter.split(',').map(op => op.trim()).filter(Boolean);
+  console.log(`🔍 Applying operation filters: ${operationFilters.join(', ')} to ${queries.length} queries`);
   
   // Debug: Show all unique operation types found in the data
   const operationTypes = new Set<string>();
@@ -212,14 +243,14 @@ function applyPostAggregationFilters(queries: any[], operationFilter?: string): 
   let matchCount = 0;
   const filteredQueries = queries.filter(query => {
     const extractedOperation = getOperationType(query);
-    const matches = extractedOperation === operationFilter;
+    const matches = extractedOperation && operationFilters.includes(extractedOperation);
     
     if (matches) {
       matchCount++;
       // Only log first few matches to avoid console spam
       if (matchCount <= 3) {
         console.log(`✅ Query ${matchCount} matches operation filter:`, {
-          operationFilter,
+          operationFilters,
           extractedOperation,
           hasCommand: !!query.command,
           hasOperation: !!query.operation,
@@ -248,6 +279,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const timeFilter = searchParams.get('timeFilter');
     const operationFilter = searchParams.get('operationFilter');
     const namespaceFilter = searchParams.get('namespaceFilter');
+    const remoteIpFilter = searchParams.get('remoteIpFilter');
     const excludeSystemNamespaces = searchParams.get('excludeSystemNamespaces') === 'true';
     const inMemorySortsFilter = searchParams.get('inMemorySortsFilter') === 'true';
     const fromMultiPlannerFilter = searchParams.get('fromMultiPlannerFilter') === 'true';
@@ -357,10 +389,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     
     // Create additional filters for slow queries (operation filter applied post-aggregation)
-    const slowQueryAdditionalFilters = createSlowQueryFilters(namespaceFilter || undefined, excludeSystemNamespaces, inMemorySortsFilter, fromMultiPlannerFilter, collectionScansFilter);
+    const slowQueryAdditionalFilters = createSlowQueryFilters(namespaceFilter || undefined, remoteIpFilter || undefined, excludeSystemNamespaces, inMemorySortsFilter, fromMultiPlannerFilter, collectionScansFilter);
     
     console.log(`🚀 Query Performance API - Starting queries for: ${filterDescription}...`);
-    console.log(`🔍 Additional filters: operation=${operationFilter}, namespace=${namespaceFilter}, excludeSystem=${excludeSystemNamespaces}, inMemorySort=${inMemorySortsFilter}, multiPlanner=${fromMultiPlannerFilter}, collectionScans=${collectionScansFilter}`);
+    console.log(`🔍 Additional filters: operation=${operationFilter}, namespace=${namespaceFilter}, remoteIp=${remoteIpFilter}, excludeSystem=${excludeSystemNamespaces}, inMemorySort=${inMemorySortsFilter}, multiPlanner=${fromMultiPlannerFilter}, collectionScans=${collectionScansFilter}`);
     console.log(`🔍 Date filter being applied:`, JSON.stringify(dateFilter, null, 2));
     
     // Debug: Check how many total documents match the basic filters before slow query filtering
@@ -590,6 +622,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           additionalFilters: {
             operationFilter,
             namespaceFilter,
+            remoteIpFilter,
             excludeSystemNamespaces,
             inMemorySortsFilter,
             fromMultiPlannerFilter,
